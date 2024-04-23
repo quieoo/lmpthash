@@ -1,21 +1,5 @@
 [![CodeQL](https://github.com/jermp/pthash/actions/workflows/codeql.yml/badge.svg)](https://github.com/jermp/pthash/actions/workflows/codeql.yml)
 
-PTHash
-------
-
-PTHash is a C++ library implementing fast and compact minimal perfect hash functions as described in the papers
-
-* [*PTHash: Revisiting FCH Minimal Perfect Hashing*](https://dl.acm.org/doi/10.1145/3404835.3462849) [1]
-* [*Parallel and External-Memory Construction of Minimal Perfect Hash Functions with PTHash*](https://ieeexplore.ieee.org/document/10210677) [2]
-
-Please, cite these papers if you use PTHash.
-
-#### Features
-- Minimal and Non-Minimal Perfect Hash Functions
-- Space/Time Efficiency: fast lookup within compressed space
-- External-Memory Scaling
-- Multi-Threaded Construction
-- Configurable: can offer different trade-offs (between construction time, lookup time, and space effectiveness)
 
 Introduction
 ----
@@ -40,16 +24,6 @@ by illustrating its functionalities through some examples.
 * [Authors](#authors)
 * [References](#references)
 
-Integration
------
-Integrating PTHash in your own project is very simple: just get the source code
-and include the header `include/pthash.hpp` in your code.
-No other configurations are needed.
-
-If you use `git`, the easiest way to add PTHash is via `git add submodule` as follows.
-
-	git submodule add https://github.com/jermp/pthash.git
-
 Compiling the Code
 -----
 
@@ -59,11 +33,6 @@ To build the code, [`CMake`](https://cmake.org/) is required.
 Clone the repository with
 
 	git clone --recursive https://github.com/quieoo/lmpthash.git
-
-If you have cloned the repository **without** `--recursive`, be sure you pull the dependencies with the following command before
-compiling:
-
-    git submodule update --init --recursive
 
 To compile the code for a release environment (see file `CMakeLists.txt` for the used compilation flags), it is sufficient to do the following:
 
