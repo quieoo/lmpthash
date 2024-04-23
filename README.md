@@ -58,7 +58,7 @@ To build the code, [`CMake`](https://cmake.org/) is required.
 
 Clone the repository with
 
-	git clone --recursive https://github.com/jermp/pthash.git
+	git clone --recursive https://github.com/quieoo/lmpthash.git
 
 If you have cloned the repository **without** `--recursive`, be sure you pull the dependencies with the following command before
 compiling:
