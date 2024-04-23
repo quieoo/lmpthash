@@ -48,7 +48,7 @@ if(NOT TARGET PTHASH)
   endif()
 
   add_subdirectory(external/essentials)
-  target_link_libraries(PTHASH INTERFACE ESSENTIALS)
+  target_link_libraries(PTHASH INTERFACE ESSENTIALS pthread)
 endif()
 
 # Only add benchmarks and tests when compiling PTHash itself, not when added as a dependency
@@ -58,6 +58,11 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   target_link_libraries(build PRIVATE PTHASH)
   add_executable(example src/example.cpp)
   target_link_libraries(example PRIVATE PTHASH)
+
+  # add executable utils
+  add_executable(utils src/utils.cpp)
+  target_link_libraries(utils PRIVATE PTHASH)
+  
 
   file(GLOB TEST_SOURCES test/test_*.cpp)
   foreach(TEST_SRC ${TEST_SOURCES})
