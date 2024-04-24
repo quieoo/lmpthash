@@ -7,3 +7,6 @@
 [submodule "external/mm_file"]
 	path = external/mm_file
 	url = https://github.com/jermp/mm_file.git
+[submodule "external/PGM-index"]
+	path = external/PGM-index
+	url = https://github.com/quieoo/PGM-index.git
