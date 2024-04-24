@@ -57,6 +57,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   add_executable(build src/build.cpp)
   target_link_libraries(build PRIVATE PTHASH)
   add_executable(example src/example.cpp)
+  target_include_directories(example PRIVATE include)
   target_link_libraries(example PRIVATE PTHASH)
 
   # add executable utils
