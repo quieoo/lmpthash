@@ -5,6 +5,9 @@
 #include <fstream>
 #include <unordered_set>
 #include <string.h>
+#include <iostream>
+#include <algorithm>
+#include "lmpthash.hpp"
 
 const int page_size = 4096;
 
@@ -73,10 +76,90 @@ void locality(std::vector<uint64_t>& access, int interval, int window){
     return;
 }
 
+void num_segments(std::vector<uint64_t>& lpns){
+    //sort lpns
+    std::sort(lpns.begin(), lpns.end());
+    // get the number of segments: each lpn is 1 bigger than the previous one
+    int num_segments = 1;
+    for(int i=1;i<lpns.size();i++){
+        if(lpns[i]!=lpns[i-1]+1){
+            num_segments++;
+        }
+    }
+    printf("num lpns: %d\n", lpns.size());
+    printf("num segments: %d\n", num_segments);
+}
+
+
+double mergeProfit(const std::vector<std::pair<int, int>>& segments, int m, int i) {
+    // Calculate the profit from merging segments from m to i
+    int total_length = 0;
+    double profit = 0.0;
+    for (int index = m; index <= i; ++index) {
+        total_length += segments[index].second;
+    }
+
+    int start = segments[m].first;
+    int end = start + total_length - 1;
+    if (m == 0) {
+        profit = total_length;  // Full length as profit if starts from first segment
+    } else {
+        int prev_end = segments[m-1].first + segments[m-1].second - 1;
+        int gap = segments[m].first - prev_end - 1;
+        if (gap > 0) {
+            profit = static_cast<double>(total_length) / (gap + 1);
+        } else {
+            profit = total_length;  // Continuous case
+        }
+    }
+    return profit;
+}
+
+double dpMaximizeProfit(int N, const std::vector<std::pair<int, int>>& segments, int P) {
+    std::vector<double> dp(P + 1, 0.0);
+
+    // Iterate over each segment
+    for (int i = 1; i <= N; ++i) {
+        // Update dp array from back to front
+        for (int j = P; j > 0; --j) {
+            double profit = 0.0;
+            for (int m = i; m > 0; --m) {
+                profit = mergeProfit(segments, m - 1, i - 1);
+                // Update dp[j] if merging from m to i under j segments
+                if (j > 1) {  // Ensure there are enough previous segments to form j-1 segments
+                    dp[j] = std::max(dp[j], dp[j-1] + profit);
+                }
+            }
+        }
+    }
+    return dp[P];
+}
+
+void test_dp() {
+    int N = 5;  // Number of segments
+    std::vector<std::pair<int, int>> segments = {{1, 3}, {5, 2}, {8, 3}, {12, 1}, {14, 2}};  // (F, A) pairs
+    int P = 3;  // Desired number of segments
+    std::cout << "Maximum profit: " << dpMaximizeProfit(N, segments, P) << std::endl;
+}
+
+void test_greedy() {
+    MonoSegmentMerger<uint64_t> merger(0.5, 0.5, 0.5, 2);
+    merger.mockkeys();
+    merger.PrintSegs();
+    merger.GreedyMerge();
+    merger.PrintSegs();
+}
+
+
+
+
 int main(int argc, char** argv){
     printf("Utils Usage\n");
     printf("----parse trace files----\n");
     printf("    <operation>: parse_csv, parse_output_csv\n");
+    printf("    <filename>\n");
+    printf("----build segments----\n");
+    printf("    <operation>: build_segs\n");
     printf("    <filename>\n");
     printf("-------------------------\n");
 
@@ -87,15 +170,33 @@ int main(int argc, char** argv){
 
         printf("parse: %s, %lu lpns, %lu uniq lpns\n", argv[2], lpns.size(), uniq_lpn.size());
         // int window=1024*1024/8;
-        int window=1000;
-        int interval=10;
-        locality(lpns, interval, window);
+        // int window=1000;
+        // int interval=10;
+        // locality(lpns, interval, window);
+        // num_segments(uniq_lpn);
+
+        MonoSegmentMerger<uint64_t> merger(0.5, 0.5, 0.5, 65536*9/10);
+        // MonoSegmentMerger<uint64_t> merger(0.5, 0.5, 0.5, 3000);
+        merger.LoadKeys(uniq_lpn);
+        merger.GreedyMerge();
+        merger.ScoreSegs();
     }else if(strcmp(argv[1], "parse_output_csv")==0){
         std::vector<uint64_t> access;
         std::vector<uint64_t> lpns;
         parse_MSR_Cambridge(lpns, access, std::string(argv[2]));
         output_access(access);
-    }else{
+    }else if(strcmp(argv[1], "build_segs")==0){
+        std::vector<uint64_t> uniq_lpn;
+        std::vector<uint64_t> lpns;
+        parse_MSR_Cambridge(uniq_lpn, lpns, std::string(argv[2]));
+        printf("parse: %s, %lu lpns, %lu uniq lpns\n", argv[2], lpns.size(), uniq_lpn.size());
+        MonoSegmentMerger<uint64_t> merger(0.5, 0.5, 0.5, 65536*9/10);
+        // MonoSegmentMerger<uint64_t> merger(0.5, 0.5, 0.5, 3000);
+        merger.LoadKeys(uniq_lpn);
+        merger.GreedyMerge();
+        merger.ScoreSegs();
+    }
+    else{
         printf("unknown operation\n");
     }
 

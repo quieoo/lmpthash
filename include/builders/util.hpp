@@ -54,7 +54,10 @@ struct build_configuration {
         , ram(static_cast<double>(constants::available_ram) * 0.75)
         , tmp_dir(constants::default_tmp_dirname)
         , minimal_output(false)
-        , verbose_output(true) {}
+        , verbose_output(true)
+        , LinearMapping(false)
+        , max_bucket_size(100)
+        , pilot_search_threshold(0) {}   // constrain from pthash MAX_BUCKET_SIZE
 
     double c;
     double alpha;
@@ -66,6 +69,11 @@ struct build_configuration {
     std::string tmp_dir;
     bool minimal_output;
     bool verbose_output;
+
+    // for linear mapping
+    bool LinearMapping;
+    uint32_t max_bucket_size;
+    uint32_t pilot_search_threshold;
 };
 
 struct seed_runtime_error : public std::runtime_error {
@@ -141,6 +149,7 @@ void merge_single_block(Pairs const& pairs, Merger& merger, bool verbose) {
     uint64_t num_pairs = pairs.size();
     logger.log();
     for (uint64_t i = 1; i != num_pairs; ++i) {
+        // printf("checking pair %ld %ld\n", pairs[i - 1].bucket_id, pairs[i].bucket_id);
         if (pairs[i].bucket_id == pairs[i - 1].bucket_id) {
             if (PTHASH_LIKELY(pairs[i].payload != pairs[i - 1].payload)) {
                 ++bucket_size;
@@ -148,8 +157,8 @@ void merge_single_block(Pairs const& pairs, Merger& merger, bool verbose) {
                 throw seed_runtime_error();
             }
         } else {
-            merger.add(pairs[i - 1].bucket_id, bucket_size,
-                       payload_iterator(pairs.begin() + i - bucket_size));
+            // printf("adding bucket %ld %ld\n", pairs[i - 1].bucket_id, bucket_size);
+            merger.add(pairs[i - 1].bucket_id, bucket_size, payload_iterator(pairs.begin() + i - bucket_size));
             bucket_size = 1;
         }
         logger.log();

@@ -21,6 +21,8 @@ struct skew_bucketer {
                                                                        m_num_sparse_buckets);
     }
 
+    
+
     uint64_t num_buckets() const {
         return m_num_dense_buckets + m_num_sparse_buckets;
     }
@@ -45,9 +47,21 @@ struct skew_bucketer {
         visitor.visit(m_M_num_sparse_buckets);
     }
 
+    void set_divisor(uint64_t divisor) {
+        this->divisor = divisor;
+    }
+    void set_min_key(uint64_t min_key) {
+        this->min_key = min_key;
+    }
+    inline uint64_t linear_bucket(uint64_t key)const{
+        // printf("key: %lu, min_key: %lu, divisor: %lu\n", key, min_key, divisor);
+        return (key-min_key)/divisor;
+    }
 private:
     uint64_t m_num_dense_buckets, m_num_sparse_buckets;
     __uint128_t m_M_num_dense_buckets, m_M_num_sparse_buckets;
+    uint64_t divisor;
+    uint64_t min_key;
 };
 
 struct uniform_bucketer {

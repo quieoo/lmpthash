@@ -11,7 +11,6 @@
 
 #include "include/utils/util.hpp"
 #include "essentials.hpp"
-
 namespace pthash {
 
 struct lines_iterator : std::forward_iterator_tag {

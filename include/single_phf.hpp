@@ -31,14 +31,18 @@ struct single_phf {
     }
 
     template <typename Builder>
-    double build(Builder const& builder, build_configuration const&) {
+    double build(Builder const& builder, build_configuration const& config) {
         auto start = clock_type::now();
+        linear_mapping=config.LinearMapping;
         m_seed = builder.seed();
         m_num_keys = builder.num_keys();
         m_table_size = builder.table_size();
         m_M = fastmod::computeM_u64(m_table_size);
+        printf("table size: %lu\n", m_table_size);
         m_bucketer = builder.bucketer();
+        printf("num buckets: %lu\n", m_bucketer.num_buckets());
         m_pilots.encode(builder.pilots().data(), m_bucketer.num_buckets());
+        printf("pilots num bits: %lu\n", m_pilots.num_bits());
         if (Minimal and m_num_keys < m_table_size) {
             m_free_slots.encode(builder.free_slots().data(), m_table_size - m_num_keys);
         }
@@ -48,6 +52,23 @@ struct single_phf {
 
     template <typename T>
     uint64_t operator()(T const& key) const {
+        if(linear_mapping){
+            uint64_t bucket=m_bucketer.linear_bucket(key);
+            // printf("key: %lu, bucket: %lu ", key, bucket);
+            auto hash=Hasher::hash(key, m_seed);
+            // printf("hash: %lu-%lu ", hash.first(), hash.second());
+            uint64_t pilot = m_pilots.access(bucket);
+            // printf("pilot: %lu ", pilot);
+            uint64_t hashed_pilot = default_hash64(pilot, m_seed);
+            uint64_t p = fastmod::fastmod_u64(hash.second() ^ hashed_pilot, m_M, m_table_size);
+            if constexpr (Minimal) {
+                if (PTHASH_LIKELY(p < num_keys())) return p;
+                return m_free_slots.access(p - num_keys());
+            }
+            // printf("p: %lu\n", p);
+            return p;
+        }
+
         auto hash = Hasher::hash(key, m_seed);
         return position(hash);
     }
@@ -104,6 +125,8 @@ private:
     skew_bucketer m_bucketer;
     Encoder m_pilots;
     ef_sequence<false> m_free_slots;
+
+    bool linear_mapping;
 };
 
 }  // namespace pthash

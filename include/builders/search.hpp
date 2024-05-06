@@ -109,7 +109,7 @@ private:
 };
 
 template <typename BucketsIterator, typename PilotsBuffer>
-void search_sequential(uint64_t num_keys, uint64_t num_buckets, uint64_t num_non_empty_buckets,
+int search_sequential(uint64_t num_keys, uint64_t num_buckets, uint64_t num_non_empty_buckets,
                        uint64_t seed, build_configuration const& config, BucketsIterator& buckets,
                        bit_vector_builder& taken, PilotsBuffer& pilots) {
     uint64_t max_bucket_size = (*buckets).size();
@@ -130,14 +130,19 @@ void search_sequential(uint64_t num_keys, uint64_t num_buckets, uint64_t num_non
     for (; processed_buckets < num_non_empty_buckets; ++processed_buckets, ++buckets) {
         auto const& bucket = *buckets;
         assert(bucket.size() > 0);
-
         for (uint64_t pilot = 0; true; ++pilot) {
+            /*
+                terminate condition
+            */
+           if(config.pilot_search_threshold > 0 && pilot > config.pilot_search_threshold) {
+               return -1;
+           }
+
             uint64_t hashed_pilot = PTHASH_LIKELY(pilot < search_cache_size)
                                         ? hashed_pilots_cache[pilot]
                                         : default_hash64(pilot, seed);
 
             positions.clear();
-
             auto bucket_begin = bucket.begin(), bucket_end = bucket.end();
             for (; bucket_begin != bucket_end; ++bucket_begin) {
                 uint64_t hash = *bucket_begin;
@@ -155,6 +160,7 @@ void search_sequential(uint64_t num_keys, uint64_t num_buckets, uint64_t num_non
                     continue;  // in-bucket collision detected, try next pilot
 
                 pilots.emplace_back(bucket.id(), pilot);
+                // printf("bucket %lu, pilot %lu\n", bucket.id(), pilot);
                 for (auto p : positions) {
                     assert(taken.get(p) == false);
                     taken.set(p, true);
@@ -166,10 +172,11 @@ void search_sequential(uint64_t num_keys, uint64_t num_buckets, uint64_t num_non
     }
 
     if (config.verbose_output) log.finalize(processed_buckets);
+    return 0;
 }
 
 template <typename BucketsIterator, typename PilotsBuffer>
-void search_parallel(uint64_t num_keys, uint64_t num_buckets, uint64_t num_non_empty_buckets,
+int search_parallel(uint64_t num_keys, uint64_t num_buckets, uint64_t num_non_empty_buckets,
                      uint64_t seed, build_configuration const& config, BucketsIterator& buckets,
                      bit_vector_builder& taken, PilotsBuffer& pilots) {
     uint64_t max_bucket_size = (*buckets).size();
@@ -289,10 +296,11 @@ void search_parallel(uint64_t num_keys, uint64_t num_buckets, uint64_t num_non_e
     assert(next_bucket_idx == num_non_empty_buckets);
 
     if (config.verbose_output) log.finalize(next_bucket_idx);
+    return 0;
 }
 
 template <typename BucketsIterator, typename PilotsBuffer>
-void search(uint64_t num_keys, uint64_t num_buckets, uint64_t num_non_empty_buckets, uint64_t seed,
+int search(uint64_t num_keys, uint64_t num_buckets, uint64_t num_non_empty_buckets, uint64_t seed,
             build_configuration const& config, BucketsIterator& buckets, bit_vector_builder& taken,
             PilotsBuffer& pilots) {
     if (config.num_threads > 1) {
@@ -301,11 +309,9 @@ void search(uint64_t num_keys, uint64_t num_buckets, uint64_t num_non_empty_buck
                                         std::to_string(std::thread::hardware_concurrency()) +
                                         " threads");
         }
-        search_parallel(num_keys, num_buckets, num_non_empty_buckets, seed, config, buckets, taken,
-                        pilots);
+        return search_parallel(num_keys, num_buckets, num_non_empty_buckets, seed, config, buckets, taken, pilots);
     } else {
-        search_sequential(num_keys, num_buckets, num_non_empty_buckets, seed, config, buckets,
-                          taken, pilots);
+        return search_sequential(num_keys, num_buckets, num_non_empty_buckets, seed, config, buckets, taken, pilots);
     }
 }
 
