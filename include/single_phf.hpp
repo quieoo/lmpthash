@@ -17,6 +17,7 @@ struct single_phf {
                                            build_configuration const& config) {
         internal_memory_builder_single_phf<Hasher> builder;
         auto timings = builder.build_from_keys(keys, n, config);
+        if(timings.searching_seconds==-1)   return timings;
         timings.encoding_seconds = build(builder, config);
         return timings;
     }
@@ -32,17 +33,19 @@ struct single_phf {
 
     template <typename Builder>
     double build(Builder const& builder, build_configuration const& config) {
+        // printf("encoding...\n");
         auto start = clock_type::now();
         linear_mapping=config.LinearMapping;
         m_seed = builder.seed();
         m_num_keys = builder.num_keys();
         m_table_size = builder.table_size();
         m_M = fastmod::computeM_u64(m_table_size);
-        printf("table size: %lu\n", m_table_size);
+        // printf("    table size: %lu\n", m_table_size);
         m_bucketer = builder.bucketer();
-        printf("num buckets: %lu\n", m_bucketer.num_buckets());
+        // printf("    num buckets: %lu\n", m_bucketer.num_buckets());
+        printf("keys_per_bucket: %f\n", double(m_num_keys) / double(m_bucketer.num_buckets()));
         m_pilots.encode(builder.pilots().data(), m_bucketer.num_buckets());
-        printf("pilots num bits: %lu\n", m_pilots.num_bits());
+        // printf("    pilots size: %lu B\n", (m_pilots.num_bits())/8);
         if (Minimal and m_num_keys < m_table_size) {
             m_free_slots.encode(builder.free_slots().data(), m_table_size - m_num_keys);
         }

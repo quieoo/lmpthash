@@ -63,4 +63,20 @@ private:
     uint64_t m_next_event_to_log;
 };
 
+struct simple_logger{
+    simple_logger(int log_level = 0) : log_level(log_level) {}
+
+    // accept a formated string and output
+    template<typename... Args>
+    void log(const char* fmt, const Args&... args) const {
+        if (log_level > 0) {
+            char buf[1024];
+            snprintf(buf, sizeof(buf), fmt, args...);
+            std::cout << buf;
+        }
+    }
+
+    int log_level;
+};
+
 }  // namespace pthash

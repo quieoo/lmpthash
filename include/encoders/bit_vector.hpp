@@ -141,6 +141,10 @@ struct bit_vector_builder {
         return m_size;
     }
 
+    void reset(){
+        for(auto& b : m_bits) b = 0;
+    }
+
 private:
     std::vector<uint64_t> m_bits;
     uint64_t m_size;

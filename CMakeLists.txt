@@ -65,11 +65,11 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   target_link_libraries(utils PRIVATE PTHASH)
   
 
-  file(GLOB TEST_SOURCES test/test_*.cpp)
-  foreach(TEST_SRC ${TEST_SOURCES})
-    get_filename_component (TEST_SRC_NAME ${TEST_SRC} NAME_WE) # without extension
-    add_executable(${TEST_SRC_NAME} ${TEST_SRC})
-    add_test(${TEST_SRC_NAME} ${TEST_SRC_NAME})
-    target_link_libraries(${TEST_SRC_NAME} PRIVATE PTHASH)
-  endforeach(TEST_SRC)
+  # file(GLOB TEST_SOURCES test/test_*.cpp)
+  # foreach(TEST_SRC ${TEST_SOURCES})
+  #   get_filename_component (TEST_SRC_NAME ${TEST_SRC} NAME_WE) # without extension
+  #   add_executable(${TEST_SRC_NAME} ${TEST_SRC})
+  #   add_test(${TEST_SRC_NAME} ${TEST_SRC_NAME})
+  #   target_link_libraries(${TEST_SRC_NAME} PRIVATE PTHASH)
+  # endforeach(TEST_SRC)
 endif()

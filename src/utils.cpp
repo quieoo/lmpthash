@@ -71,7 +71,7 @@ void locality(std::vector<uint64_t>& access, int interval, int window){
     size_t sum=0;
     for(int i=1;i<window;i++){
         sum+=precedor[i];
-        printf("%f\n", i, (double)sum/access.size());
+        printf("%d %f\n", i, (double)sum/access.size());
     }
     return;
 }
@@ -161,6 +161,7 @@ int main(int argc, char** argv){
     printf("----build segments----\n");
     printf("    <operation>: build_segs\n");
     printf("    <filename>\n");
+    printf("    <config_file_path>\n");
     printf("-------------------------\n");
 
     if(strcmp(argv[1], "parse_csv")==0){
@@ -190,11 +191,12 @@ int main(int argc, char** argv){
         std::vector<uint64_t> lpns;
         parse_MSR_Cambridge(uniq_lpn, lpns, std::string(argv[2]));
         printf("parse: %s, %lu lpns, %lu uniq lpns\n", argv[2], lpns.size(), uniq_lpn.size());
-        MonoSegmentMerger<uint64_t> merger(0.5, 0.5, 0.5, 65536*9/10);
-        // MonoSegmentMerger<uint64_t> merger(0.5, 0.5, 0.5, 3000);
-        merger.LoadKeys(uniq_lpn);
-        merger.GreedyMerge();
-        merger.ScoreSegs();
+
+        lmpthash_config cfg;
+        cfg.load_config(std::string(argv[3]));
+        LMPTHashBuilder<uint64_t, uint64_t> builder(cfg);
+        builder.Segmentation(uniq_lpn);
+        builder.Bucketing();
     }
     else{
         printf("unknown operation\n");

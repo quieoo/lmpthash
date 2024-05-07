@@ -24,7 +24,11 @@ struct skew_bucketer {
     
 
     uint64_t num_buckets() const {
-        return m_num_dense_buckets + m_num_sparse_buckets;
+        if(m_num_buckets == 0){
+            return m_num_dense_buckets + m_num_sparse_buckets;
+        }else{
+            return m_num_buckets;
+        }
     }
 
     size_t num_bits() const {
@@ -53,16 +57,23 @@ struct skew_bucketer {
     void set_min_key(uint64_t min_key) {
         this->min_key = min_key;
     }
+    void set_num_buckets(uint64_t num_buckets) {
+        this->m_num_buckets = num_buckets;
+    }
     inline uint64_t linear_bucket(uint64_t key)const{
         // printf("key: %lu, min_key: %lu, divisor: %lu\n", key, min_key, divisor);
         return (key-min_key)/divisor;
     }
+
 private:
     uint64_t m_num_dense_buckets, m_num_sparse_buckets;
     __uint128_t m_M_num_dense_buckets, m_M_num_sparse_buckets;
     uint64_t divisor;
     uint64_t min_key;
+    uint64_t m_num_buckets=0;
 };
+
+
 
 struct uniform_bucketer {
     uniform_bucketer() {}

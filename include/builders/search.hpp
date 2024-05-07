@@ -175,6 +175,75 @@ int search_sequential(uint64_t num_keys, uint64_t num_buckets, uint64_t num_non_
     return 0;
 }
 
+
+template <typename BucketsIterator>
+int linear_search(uint64_t num_keys, uint64_t num_buckets, uint64_t num_non_empty_buckets,
+                       uint64_t seed, build_configuration const& config, BucketsIterator& buckets,
+                       bit_vector_builder& taken, uint64_t* pilots) {
+    uint64_t max_bucket_size = (*buckets).size();
+    uint64_t table_size = taken.size();
+    std::vector<uint64_t> positions;
+    positions.reserve(max_bucket_size);
+    __uint128_t M = fastmod::computeM_u64(table_size);
+
+    std::vector<uint64_t> hashed_pilots_cache(search_cache_size);
+    for (uint64_t pilot = 0; pilot != search_cache_size; ++pilot) {
+        hashed_pilots_cache[pilot] = default_hash64(pilot, seed);
+    }
+
+    search_logger log(num_keys, table_size, num_buckets);
+    if (config.verbose_output) log.init();
+
+    uint64_t processed_buckets = 0;
+    for (; processed_buckets < num_non_empty_buckets; ++processed_buckets, ++buckets) {
+        auto const& bucket = *buckets;
+        assert(bucket.size() > 0);
+        for (uint64_t pilot = 0; true; ++pilot) {
+            /*
+                terminate condition
+            */
+           if(config.pilot_search_threshold > 0 && pilot > config.pilot_search_threshold) {
+               return -1;
+           }
+
+            uint64_t hashed_pilot = PTHASH_LIKELY(pilot < search_cache_size)
+                                        ? hashed_pilots_cache[pilot]
+                                        : default_hash64(pilot, seed);
+
+            positions.clear();
+            auto bucket_begin = bucket.begin(), bucket_end = bucket.end();
+            for (; bucket_begin != bucket_end; ++bucket_begin) {
+                uint64_t hash = *bucket_begin;
+                uint64_t p = fastmod::fastmod_u64(hash ^ hashed_pilot, M, table_size);
+                if (taken.get(p)) break;
+                positions.push_back(p);
+            }
+
+            if (bucket_begin == bucket_end) {  // all keys do not have collisions with taken
+
+                // check for in-bucket collisions
+                std::sort(positions.begin(), positions.end());
+                auto it = std::adjacent_find(positions.begin(), positions.end());
+                if (it != positions.end())
+                    continue;  // in-bucket collision detected, try next pilot
+
+                // pilots.emplace_back(bucket.id(), pilot);
+                pilots[bucket.id()] = pilot;
+                // printf("bucket %lu, pilot %lu\n", bucket.id(), pilot);
+                for (auto p : positions) {
+                    assert(taken.get(p) == false);
+                    taken.set(p, true);
+                }
+                if (config.verbose_output) log.update(processed_buckets, bucket.size(), pilot);
+                break;
+            }
+        }
+    }
+
+    if (config.verbose_output) log.finalize(processed_buckets);
+    return 0;
+}
+
 template <typename BucketsIterator, typename PilotsBuffer>
 int search_parallel(uint64_t num_keys, uint64_t num_buckets, uint64_t num_non_empty_buckets,
                      uint64_t seed, build_configuration const& config, BucketsIterator& buckets,

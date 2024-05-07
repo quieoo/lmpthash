@@ -13,8 +13,8 @@ typedef uint64_t bucket_id_type;
 #else
 typedef uint32_t bucket_id_type;
 #endif
-typedef uint8_t bucket_size_type;
-constexpr bucket_size_type MAX_BUCKET_SIZE = 100;
+typedef uint32_t bucket_size_type;
+constexpr bucket_size_type MAX_BUCKET_SIZE = 1000;
 
 static inline std::string get_tmp_builder_filename(std::string const& dir_name, uint64_t id) {
     return dir_name + "/pthash.temp." + std::to_string(id) + ".builder";
@@ -46,7 +46,7 @@ struct build_timings {
 struct build_configuration {
     build_configuration()
         : c(4.5)
-        , alpha(0.98)
+        , alpha(0.99)
         , num_partitions(1)
         , num_buckets(constants::invalid_num_buckets)
         , num_threads(1)
@@ -57,7 +57,9 @@ struct build_configuration {
         , verbose_output(true)
         , LinearMapping(false)
         , max_bucket_size(100)
-        , pilot_search_threshold(0) {}   // constrain from pthash MAX_BUCKET_SIZE
+        , pilot_search_threshold(0)
+        , dynamic_alpha(false)
+        , alpha_limits(0.9) {}   // constrain from pthash MAX_BUCKET_SIZE
 
     double c;
     double alpha;
@@ -74,6 +76,8 @@ struct build_configuration {
     bool LinearMapping;
     uint32_t max_bucket_size;
     uint32_t pilot_search_threshold;
+    bool dynamic_alpha;
+    double alpha_limits;
 };
 
 struct seed_runtime_error : public std::runtime_error {
@@ -142,9 +146,9 @@ private:
 };
 
 template <typename Pairs, typename Merger>
-void merge_single_block(Pairs const& pairs, Merger& merger, bool verbose) {
+uint64_t merge_single_block(Pairs const& pairs, Merger& merger, bool verbose) {
     progress_logger logger(pairs.size(), " == merged ", " pairs", verbose);
-
+    uint64_t max_bucket_id=pairs[0].bucket_id;
     bucket_size_type bucket_size = 1;
     uint64_t num_pairs = pairs.size();
     logger.log();
@@ -162,16 +166,19 @@ void merge_single_block(Pairs const& pairs, Merger& merger, bool verbose) {
             bucket_size = 1;
         }
         logger.log();
+        max_bucket_id = max_bucket_id > pairs[i].bucket_id ? max_bucket_id : pairs[i].bucket_id;
     }
 
     // add the last bucket
     merger.add(pairs[num_pairs - 1].bucket_id, bucket_size,
                payload_iterator(pairs.end() - bucket_size));
     logger.finalize();
+    return max_bucket_id;
 }
 
 template <typename Pairs, typename Merger>
-void merge_multiple_blocks(std::vector<Pairs> const& pairs_blocks, Merger& merger, bool verbose) {
+uint64_t merge_multiple_blocks(std::vector<Pairs> const& pairs_blocks, Merger& merger, bool verbose) {
+    uint64_t max_bucket_id=0;
     uint64_t num_pairs =
         std::accumulate(pairs_blocks.begin(), pairs_blocks.end(), static_cast<uint64_t>(0),
                         [](uint64_t sum, Pairs const& pairs) { return sum + pairs.size(); });
@@ -230,7 +237,7 @@ void merge_multiple_blocks(std::vector<Pairs> const& pairs_blocks, Merger& merge
     // merge
     for (uint64_t i = 0; (PTHASH_LIKELY(idx_heap.size())); ++i, advance_heap_head()) {
         bucket_payload_pair pair = (*iterators[idx_heap[0]]);
-
+        max_bucket_id=max_bucket_id>pair.bucket_id?max_bucket_id:pair.bucket_id;
         if (pair.bucket_id == bucket_id) {
             if (PTHASH_LIKELY(pair.payload != bucket_payloads.back())) {
                 bucket_payloads.push_back(pair.payload);
@@ -249,14 +256,15 @@ void merge_multiple_blocks(std::vector<Pairs> const& pairs_blocks, Merger& merge
     // add the last bucket
     merger.add(bucket_id, bucket_payloads.size(), bucket_payloads.begin());
     logger.finalize();
+    return max_bucket_id;
 }
 
 template <typename Pairs, typename Merger>
-void merge(std::vector<Pairs> const& pairs_blocks, Merger& merger, bool verbose) {
+uint64_t merge(std::vector<Pairs> const& pairs_blocks, Merger& merger, bool verbose) {
     if (pairs_blocks.size() == 1) {
-        merge_single_block(pairs_blocks[0], merger, verbose);
+        return merge_single_block(pairs_blocks[0], merger, verbose);
     } else {
-        merge_multiple_blocks(pairs_blocks, merger, verbose);
+        return merge_multiple_blocks(pairs_blocks, merger, verbose);
     }
 }
 

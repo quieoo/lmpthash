@@ -12,12 +12,15 @@ namespace pthash {
 template <typename Hasher>
 struct internal_memory_builder_single_phf {
     typedef Hasher hasher_type;
+    simple_logger sloger;
+
 
     template <typename RandomAccessIterator>
     build_timings build_from_keys(RandomAccessIterator keys, uint64_t num_keys, build_configuration const& config) {
         if(config.LinearMapping){
             std::vector<uint64_t> keys_vector(keys, keys + num_keys);
-            return build_with_linear_mapping(keys_vector, num_keys, config);
+            auto ret= build_with_linear_mapping(keys_vector, num_keys, config);
+            return ret;
         }
         if (config.seed == constants::invalid_seed) {
             for (auto attempt = 0; attempt < 10; ++attempt) {
@@ -36,69 +39,100 @@ struct internal_memory_builder_single_phf {
 
     template <typename RandomAccessIterator>
     build_timings build_with_linear_mapping(RandomAccessIterator keys, uint64_t num_keys, build_configuration const& config){
-        uint64_t table_size = static_cast<double>(num_keys) / config.alpha;
-        if ((table_size & (table_size - 1)) == 0) table_size += 1;
-
+        sloger.log("number keys: %lu\n", num_keys);
         m_num_keys = num_keys;
-        m_table_size = table_size;
         m_seed=config.seed;
-
-        clock_type::time_point start;
-        start = clock_type::now();
+        
         build_timings time;
 
-        printf("searching for a maximum bucket size with a searching threshold: %ld\n", config.pilot_search_threshold);
+        uint64_t* temp_pilots=(uint64_t*)malloc(m_num_keys*sizeof(uint64_t));
+
+        //printf("searching for a maximum bucket size with a searching threshold: %ld\n", config.pilot_search_threshold);
         // binary search for a maximum bucket size that can succssfully find out pilots
-        std::vector<uint64_t> temp_pilots;
-        uint64_t lo = 1, hi = config.max_bucket_size, ans=-1;
+        uint64_t lo = 1, hi = config.max_bucket_size;
+        m_num_buckets=0;
         /* DEBUG USE*/
-        // lo=10;
-        // hi=10;
+        // lo=1;
+        // hi=1;
         while (lo <= hi) {
             uint64_t mid=(lo+hi)/2;
             uint64_t num_bucket= num_keys/mid;
-            printf("try B: %ld, bucket number %ld\n", mid, num_bucket);            
+            if(num_bucket==0)    num_bucket=1;
+            sloger.log("try B: %ld, bucket number %ld\n", mid, num_bucket);  
+
+            // get bucket ids 
+            std::pair<uint64_t, uint64_t> bucketed;
             buckets_t buckets;
-            
-            std::vector<pairs_t> pairs_blocks;
-            std::pair<uint64_t, uint64_t> ret=linear_map(keys, num_keys, pairs_blocks, config, num_bucket, config.max_bucket_size);
-            if(ret.first==0){
+            {
+                std::vector<pairs_t> pairs_blocks;
+                bucketed=linear_map(keys, num_keys, pairs_blocks, config, num_bucket, config.max_bucket_size);
+                if(bucketed.first!=0){
+                    // actual used bucket
+                    num_bucket=merge(pairs_blocks, buckets, config.verbose_output)+1;
+                }
+            }
+            if(bucketed.first==0){
                 // a bucket is larger than max_bucket_size
-                printf("    a bucket is larger than max_bucket_size\n");
+                // printf("    a bucket is larger than max_bucket_size\n");
                 hi=mid-1;
                 continue;
             }
-            merge(pairs_blocks, buckets, config.verbose_output);
-            
 
-            auto buckets_iterator = buckets.begin();
-            temp_pilots.resize(num_bucket);
-            std::fill(temp_pilots.begin(), temp_pilots.end(), 0);
-            bit_vector_builder taken(m_table_size);
-            uint64_t num_non_empty_buckets = buckets.num_buckets();
-            pilots_wrapper_t pilots_wrapper(temp_pilots);
-            if(!search(m_num_keys, num_bucket, num_non_empty_buckets, m_seed, config, buckets_iterator, taken, pilots_wrapper)){
-                // current num_bucket works
-                // try with larger bucket size
-                printf("    current num_bucket works\n");
-                ans = num_bucket;
-                m_bucketer.set_divisor(ret.first);
-                m_bucketer.set_min_key(ret.second);
-                m_bucketer.init(num_bucket);
-                m_pilots=temp_pilots;
+            uint8_t found_in_alpha_limits=0;
+            double alpha=config.alpha;
+            // dynamic search for pilots
+            while(1){
+                uint64_t table_size = static_cast<double>(num_keys) / alpha;
+                if ((table_size & (table_size - 1)) == 0) table_size += 1;
+                sloger.log("    table size: %lu, alpha: %lf\n", table_size, alpha);
+                auto buckets_iterator = buckets.begin();
+                memset(temp_pilots, 0, num_bucket*sizeof(uint64_t));
+                // std::vector<uint64_t> temp_pilots;
+                // temp_pilots.resize(num_bucket);
+                // std::fill(temp_pilots.begin(), temp_pilots.end(), 0);
+                int ret;
+                {
+                    bit_vector_builder taken(table_size);
+                    uint64_t num_non_empty_buckets = buckets.num_buckets();
+                    // pilots_wrapper_t pilots_wrapper(temp_pilots);
+                    ret=linear_search(m_num_keys, num_bucket, num_non_empty_buckets, m_seed, config, buckets_iterator, taken, temp_pilots);
+                }
+                if(ret==0){
+                    found_in_alpha_limits=1;
+                    m_table_size=table_size;
+                }else if(config.dynamic_alpha){
+                    alpha*=alpha;
+                    if(alpha >= config.alpha_limits){
+                        continue;
+                    }
+                }
+                break;
+            }
+            if(found_in_alpha_limits){
+                // printf("    current num_bucket works: %d\n", num_bucket);
+                m_num_buckets = num_bucket;
+                m_bucketer.set_divisor(bucketed.first);
+                m_bucketer.set_min_key(bucketed.second);
+                m_bucketer.set_num_buckets(num_bucket);
+                m_pilots.resize(num_bucket);
+                for(int i=0;i<num_bucket;++i){
+                    m_pilots[i]=temp_pilots[i];
+                }
                 lo=mid+1;
-
             }else{
-                printf("    searching threshold failed\n");
+                // printf("    searching threshold failed\n");
                 hi=mid-1;
             }
+            //printf("finished searching B: %ld\n", mid);
         }
 
-        if(ans<0) throw std::runtime_error("no suitable bucket size found");
-        printf("successfully found a mimimum bucket number %ld\n", ans);
-        m_num_buckets=ans;
-
-        time.searching_seconds=seconds(clock_type::now() - start);
+        free(temp_pilots);
+        if(m_num_buckets==0){
+            // printf("failed to find a mimimum bucket number\n");
+            time.searching_seconds=-1;
+        }else{
+            time.searching_seconds=0;
+        }
         return time;
     }
 
@@ -130,7 +164,7 @@ struct internal_memory_builder_single_phf {
         m_bucketer.init(m_num_buckets);
     
 
-        if (1) {
+        if (config.verbose_output) {
             std::cout << "c = " << config.c << std::endl;
             std::cout << "alpha = " << config.alpha << std::endl;
             std::cout << "num_keys = " << num_keys << std::endl;
@@ -350,6 +384,13 @@ private:
             ++m_num_buckets;
         }
 
+        void reset(){
+            m_num_buckets = 0;
+            for (auto& buffer : m_buffers) {
+                buffer.clear();
+            }
+        }
+
         uint64_t num_buckets() const {
             return m_num_buckets;
         };
@@ -448,6 +489,8 @@ private:
         
         uint64_t divisor;
         pairs_t pairs(num_keys);
+        pairs_blocks.push_back(pairs);
+
         uint64_t min_key=keys[0];
         uint64_t max_key=keys[0];
         for(uint64_t i=1;i!=num_keys;++i){
@@ -457,8 +500,8 @@ private:
                 max_key=keys[i];
         }
 
-        divisor=(max_key-min_key)/bucket_num;
-        printf("    max_key=%lu,min_key=%lu,num_bucket:%u, divisor=%lu ",max_key,min_key,bucket_num,divisor);
+        divisor=(max_key-min_key+bucket_num-1)/bucket_num;
+        // printf("    max_key=%lu,min_key=%lu,num_bucket:%u, divisor=%lu ",max_key,min_key,bucket_num,divisor);
         if(divisor==0)
             divisor=1;
 
@@ -469,24 +512,25 @@ private:
             uint32_t bucket_id=(keys[i]-min_key)/divisor;
             // pairs[i] = {static_cast<bucket_id_type>(bucket_id), keys[i]};
             auto hash=hasher_type::hash(keys[i], config.seed);
-            pairs[i]={static_cast<bucket_id_type>(bucket_id), hash.first()};
+            pairs_blocks[0][i]={static_cast<bucket_id_type>(bucket_id), hash.first()};
             // search bucket_sizes for bucket_id
             auto it=bucket_sizes.find(bucket_id);
             if(it==bucket_sizes.end())
                 bucket_sizes[bucket_id]=1;
             else{
                 it->second=it->second+1;
-                if((it->second)>max_bucket_size){
-                    printf("    bucket_id=%u, it->second=%u, max_bucket_size=%u\n",bucket_id,it->second,max_bucket_size);
-                    return {0,0};
-                }
+                // if((it->second)>max_bucket_size){
+                //     // //printf("    bucket_id=%u, it->second=%u, max_bucket_size=%u\n",bucket_id,it->second,max_bucket_size);
+                //     return {0,0};
+                // }
             }
-            // printf("[%u]%lu-%lu\n",bucket_id,keys[i], hash.first());
+            sloger.log("[%u]%lu-%lu\n",bucket_id,keys[i], hash.first());
         }
 
-        std::sort(pairs.begin(), pairs.end());
-        pairs_blocks.resize(1);
-        pairs_blocks.front().swap(pairs);
+        std::sort(pairs_blocks[0].begin(), pairs_blocks[0].end());
+        // pairs_blocks.push_back(pairs);
+        // pairs_blocks.resize(1);
+        // pairs_blocks.front().swap(pairs);
         
         return {divisor,min_key};
     }
