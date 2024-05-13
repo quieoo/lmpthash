@@ -2,7 +2,7 @@
 
 #include "include/builders/util.hpp"
 #include "include/builders/search.hpp"
-#include "external/mm_file/include/mm_file/mm_file.hpp"
+#include "mm_file.hpp"
 #include "include/utils/bucketers.hpp"
 #include "include/utils/logger.hpp"
 #include "include/utils/hasher.hpp"

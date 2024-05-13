@@ -48,8 +48,9 @@ if(NOT TARGET PTHASH)
     endif()
   endif()
 
-  add_subdirectory(external/essentials)
-  target_link_libraries(PTHASH INTERFACE ESSENTIALS pthread)
+  # add_subdirectory(external/essentials)
+  # target_link_libraries(PTHASH INTERFACE ESSENTIALS pthread)
+  target_link_libraries(PTHASH INTERFACE pthread)
 endif()
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)

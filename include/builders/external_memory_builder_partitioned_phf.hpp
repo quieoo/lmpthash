@@ -1,7 +1,7 @@
 #pragma once
 
 #include "include/builders/util.hpp"
-#include "external/mm_file/include/mm_file/mm_file.hpp"
+#include "mm_file.hpp"
 #include "include/builders/internal_memory_builder_single_phf.hpp"
 #include "include/builders/internal_memory_builder_partitioned_phf.hpp"
 
