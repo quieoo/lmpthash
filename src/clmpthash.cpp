@@ -122,3 +122,11 @@ int get_pa(LVA lva, void* index, PhysicalAddr* pa){
 
     return 0;
 }
+
+int clean_index(void* index){
+    LMPTHashBuilder<LVA, PhysicalAddr>* builder=static_cast<LMPTHashBuilder<LVA, PhysicalAddr>*>(index);
+
+    builder->Cleaning();
+    // printf("finish cleanning buffer\n");
+    return 0;
+}

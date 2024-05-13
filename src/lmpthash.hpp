@@ -524,6 +524,7 @@ struct LMPTHashBuilder{
             }
         }
 
+        printf("\n");
         return 0;
     }
 
@@ -586,6 +587,17 @@ struct LMPTHashBuilder{
             ++seg_id;
             l=r;
         }
+        int seg_type[3]={0,0,0};
+        for(int i=0; i<lmpt_segments.size(); ++i){
+            if(lmpt_segments[i].seg_type==0){
+                seg_type[0]++;
+            }else if(lmpt_segments[i].seg_type==1){
+                seg_type[1]++;
+            }else if(lmpt_segments[i].seg_type==2){
+                seg_type[2]++;
+            }
+        }
+        printf("    # seg_type: %ld, %ld, %ld\n", seg_type[0], seg_type[1], seg_type[2]);
         return 0;
     }
 

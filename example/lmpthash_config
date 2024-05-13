@@ -10,4 +10,4 @@ dynamic_alpha 1
 alpha_limits 0.8
 left_epsilon 1
 right_epsilon 100
-trace_path ../../../../LeaFTL/wiscsee/leaftl_scripts/leaftl_traces/MSR-Cambridge/hm_0.csv
+trace_path ../../../LeaFTL/wiscsee/leaftl_scripts/leaftl_traces/MSR-Cambridge/prn_0.csv

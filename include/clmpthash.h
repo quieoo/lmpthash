@@ -52,6 +52,7 @@ void parse_configuration(char* config_path, clmpthash_config* cfg, LVA** lvas, P
 
 void* build_index(LVA* lvas, PhysicalAddr* pas, uint64_t num, clmpthash_config* cfg);
 int get_pa(LVA lva, void* index, PhysicalAddr* pa);
+int clean_index(void* index);
 
 #ifdef __cplusplus
 }

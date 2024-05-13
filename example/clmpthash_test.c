@@ -12,6 +12,11 @@ int main(int argc, char** argv) {
 
     PhysicalAddr pa;
     for(int i = 0; i < num_querys; ++i) {
+        if(i%10000==0){
+            printf("\r    %d / %d\n", i, num_querys);
+            printf("\033[1A");
+        }
+
         int ret = get_pa(querys[i], index, &pa);
         
         // check if the result is correct: first 8 bytes should be equal to the original lva
@@ -29,7 +34,8 @@ int main(int argc, char** argv) {
             return -1;
         }
     }
-    printf("test passed\n");
-    return 0;
+    printf("\ntest passed\n");
 
+    clean_index(index);
+    return 0;
 }
