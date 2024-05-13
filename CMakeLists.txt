@@ -52,14 +52,13 @@ if(NOT TARGET PTHASH)
   target_link_libraries(PTHASH INTERFACE ESSENTIALS pthread)
 endif()
 
-# Only add benchmarks and tests when compiling PTHash itself, not when added as a dependency
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
   # add_executable(build src/build.cpp)
   # target_link_libraries(build PRIVATE PTHASH)
-  add_executable(example src/example.cpp)
-  target_include_directories(example PRIVATE include)
-  target_link_libraries(example PRIVATE PTHASH)
+  # add_executable(example src/example.cpp)
+  # target_include_directories(example PRIVATE include)
+  # target_link_libraries(example PRIVATE PTHASH)
 
   # add executable utils
   add_executable(utils src/utils.cpp)
@@ -74,3 +73,8 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   #   target_link_libraries(${TEST_SRC_NAME} PRIVATE PTHASH)
   # endforeach(TEST_SRC)
 endif()
+
+add_library(clmpthash STATIC
+  src/clmpthash.cpp
+)
+target_link_libraries(clmpthash PRIVATE PTHASH)

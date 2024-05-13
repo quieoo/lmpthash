@@ -10,36 +10,9 @@
 #include "lmpthash.hpp"
 #include <iomanip>
 
-const int page_size = 4096;
 
-void parse_MSR_Cambridge(std::vector<uint64_t>&  uniq_lpn, std::vector<uint64_t>& lpns, std::string filename){
-    // hash table for unique lpn
-    std::unordered_set<uint64_t> ht;
 
-    // open file with name "filename", and read by lines
-    std::ifstream file(filename);
-    std::string line;
-    uint64_t timestamp, offset, size, t0;
-    char trace_name[100];
-    char op[100];
-    int trace_id;
-    uint64_t lpn;
-    while (std::getline(file, line)) {
-        sscanf(line.c_str(), "%lu,%100[^,],%d,%100[^,],%lu,%lu,%lu\n", &timestamp,trace_name,&trace_id,op,&offset,&size,&t0);
-        for(int i=0;i<size/page_size;i++){
-            lpn=offset/page_size+i;
-            lpns.push_back(lpn);
-            ht.insert(lpn);
-        }
-    }
 
-    // get unique lpn
-    for (auto it = ht.begin(); it != ht.end(); it++) {
-        uniq_lpn.push_back(*it);
-    }
-    file.close();
-    return;   
-}
 
 void output_access(std::vector<uint64_t>& access){
     // write access to file, each line is a access
@@ -179,7 +152,6 @@ int main(int argc, char** argv){
     printf("    <filename>\n");
     printf("----build segments----\n");
     printf("    <operation>: build_segs\n");
-    printf("    <filename>\n");
     printf("    <config_file_path>\n");
     printf("-------------------------\n");
 
@@ -206,21 +178,24 @@ int main(int argc, char** argv){
         parse_MSR_Cambridge(lpns, access, std::string(argv[2]));
         output_access(access);
     }else if(strcmp(argv[1], "build_segs")==0){
+        lmpthash_config cfg;
+        cfg.load_config(std::string(argv[2]));
+
         std::vector<uint64_t> uniq_lpn;
         std::vector<uint64_t> lpns;
-        parse_MSR_Cambridge(uniq_lpn, lpns, std::string(argv[2]));
-        printf("parse: %s, %lu lpns, %lu uniq lpns\n", argv[2], lpns.size(), uniq_lpn.size());
+        parse_MSR_Cambridge(uniq_lpn, lpns, cfg.trace_path);
+        printf("parse: %s, %lu lpns, %lu uniq lpns\n", cfg.trace_path.c_str(), lpns.size(), uniq_lpn.size());
         std::vector<PhyAddr> ppns;
-        for(uint64_t i=0;i<lpns.size();i++){
-            ppns.push_back(PhyAddr(lpns[i]));
+        for(uint64_t i=0;i<uniq_lpn.size();i++){
+            ppns.push_back(PhyAddr(uniq_lpn[i]));
         }
 
-        lmpthash_config cfg;
-        cfg.load_config(std::string(argv[3]));
         LMPTHashBuilder<uint64_t, PhyAddr> builder(cfg);
         builder.Segmenting(uniq_lpn);
         builder.Learning();
-        builder.Bucketing();
+        // builder.Bucketing();
+        builder.Multi_Bucketing();
+
         builder.Tabling(uniq_lpn, ppns);
 
         builder.Verifing(uniq_lpn, ppns);

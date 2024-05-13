@@ -5,8 +5,13 @@
 #include "include/pthash.hpp"
 #include "include/utils/logger.hpp"
 #include "pgm/pgm_index.hpp"
+#include <thread>
+#include <mutex>
+#include <atomic>
+#include <condition_variable>
+#include <unordered_set>
 
-
+const int page_size = 4096;
 typedef pthash::single_phf<pthash::murmurhash2_64, pthash::compact, false> pthash_type;
 
 #define ANSI_CURSOR_UP(n)    "\033[" #n "A"
@@ -67,8 +72,8 @@ struct MonoSegmentMerger{
             // printf("alpha: %f, beta: %f, gamma: %f, P: %d\n", alpha, beta, gamma, P);
     }
     void LoadKeys(std::vector<Key>& keys){
-        // sort keys
-        std::sort(keys.begin(), keys.end());
+        // make sure keys are sorted
+        assert(std::is_sorted(keys.begin(), keys.end()));
         // get all continuous keys and insert into segments
         auto it = keys.begin();
         while (it != keys.end()) {
@@ -311,6 +316,7 @@ struct lmpthash_config{
             else if(name=="alpha_limits") alpha_limits=std::stof(value);
             else if(name=="left_epsilon") left_epsilon=std::stoi(value);
             else if(name=="right_epsilon") right_epsilon=std::stoi(value);
+            else if(name=="trace_path") trace_path=value;
         }
     }
 
@@ -332,6 +338,7 @@ struct lmpthash_config{
     int left_epsilon;
     int right_epsilon;
 
+    std::string trace_path;
 };
 
 struct LMPTSegment{
@@ -371,6 +378,99 @@ struct LMPTHashBuilder{
             MonoSegment<Key>& seg=ms_merger.segments[i];
             lmpt_segments[i].first_key=seg.first_key[0];
         }
+        return 0;
+    }
+
+
+    // 结构体用于保存线程处理结果
+    struct SegmentResult {
+        uint32_t index;
+        uint32_t slope;
+        pthash_type pthashMap;
+    };
+
+    // 全局变量，用于保存所有线程处理结果
+    std::vector<SegmentResult> segmentResults;
+    std::atomic<int> currentSegment;
+
+    // 处理单个段的函数
+    void processSegment(const std::vector<MonoSegment<Key>>& segments, int index, pthash::build_configuration config) {
+        MonoSegment seg = segments[index];
+        SegmentResult result;
+        result.index = index;
+        
+        if(seg.first_key.size() == 1) {
+            // accurate segment
+            result.slope = 0;
+        } else {
+            std::vector<uint32_t> keys;
+            for(uint32_t j = 0; j < seg.first_key.size(); ++j) {
+                for(uint32_t k = seg.first_key[j]; k <= seg.last_key[j]; ++k) {
+                    keys.push_back(k);
+                }
+            }
+            
+            config.LinearMapping = true;
+            pthash_type f;
+            auto ret = f.build_in_internal_memory(keys.begin(), keys.size(), config);
+            if(ret.searching_seconds == -1) {
+                config.LinearMapping = false;
+                ret = f.build_in_internal_memory(keys.begin(), keys.size(), config);
+            }
+            
+            result.slope = f.get_slope();
+            result.pthashMap = f;
+        }
+        
+        // 保存处理结果到全局变量
+        segmentResults[index] = result;
+    }
+
+    int Multi_Bucketing() {
+        printf("## Bucketing ##\n");
+        printf("    # hashed_num_bucket_c: %f, table_size_alpha: %f, max_bucket_size: %d, pilot_search_threshold: %d, dynamic_alpha: %d, alpha_limits: %f\n", cfg.hashed_num_bucket_c, cfg.table_size_alpha, cfg.max_bucket_size, cfg.pilot_search_threshold, cfg.dynamic_alpha, cfg.alpha_limits);
+        
+        uint32_t seg_num = ms_merger.segments.size();
+        pthash::build_configuration config;
+        config.c = cfg.hashed_num_bucket_c;
+        config.alpha = cfg.table_size_alpha;
+        config.minimal_output = true;
+        config.verbose_output = false;
+        config.LinearMapping = true;
+        config.max_bucket_size = cfg.max_bucket_size;
+        config.pilot_search_threshold = cfg.pilot_search_threshold;
+        config.dynamic_alpha = cfg.dynamic_alpha;
+        config.alpha_limits = cfg.alpha_limits;
+        
+        segmentResults.resize(seg_num);
+        currentSegment.store(0);
+        std::vector<std::thread> threads;
+        int numThreads = std::thread::hardware_concurrency(); 
+        printf("    Progress with %d threads: \n", numThreads);
+      
+        for(int i = 0; i < numThreads; ++i) {
+            threads.emplace_back([&](){
+                while (true) {
+                    int segmentIndex = currentSegment.fetch_add(1);
+                    if (segmentIndex >= seg_num) break; // 所有段都处理完毕
+                    processSegment(ms_merger.segments, segmentIndex, config);
+                    printf("\r    %d / %d\n", segmentIndex, seg_num);
+                    std::cout<<ANSI_CURSOR_UP(1);
+                }
+            });
+        }
+
+        for(auto& thread : threads) {
+            thread.join();
+        }
+
+        for(uint32_t i = 0; i < seg_num; ++i) {
+            // printf("\r    %d / %d\n", i, seg_num);
+            // std::cout << ANSI_CURSOR_UP(1);
+            lmpt_segments[i].slope=segmentResults[i].slope;
+            pthash_map[i]=segmentResults[i].pthashMap;
+        }
+        
         return 0;
     }
 
@@ -434,7 +534,6 @@ struct LMPTHashBuilder{
         // divide keys into segments according to first_key in lmpt_segments
         uint32_t seg_id=0;
         uint64_t l=0,r=0;
-        printf("    # num of segments: %d\n", lmpt_segments.size());
         while(l<keys.size()){
             Key last_key=seg_id<(lmpt_segments.size()-1)?lmpt_segments[seg_id+1].first_key:UINT64_MAX;
             while(r<keys.size() && keys[r]<last_key){
@@ -565,11 +664,12 @@ struct LMPTHashBuilder{
 
     int Verifing(std::vector<Key>& keys, std::vector<Value>& values){
         printf("## Verifing ##\n");
-        for(uint64_t i=603729; i<keys.size(); i++){
+        for(uint64_t i=0; i<keys.size(); i++){
             slogger.func_log(2, "    %ld-th key: %lu\n", i, keys[i]);
             Key k=keys[i];
             Value v=values[i];
-
+            // k=1354511;
+            
             auto range=pgm_index.search(k);
             auto lo=range.lo;
             auto hi=range.hi;
@@ -601,6 +701,19 @@ struct LMPTHashBuilder{
 
             if(pos!=-1){
                 Value* t=(Value*)(lmpt_segments[ans].next_addr);
+                Key _lva=0;
+                for(int j=0;j<8;j++){
+                    // _lva=(_lva<<8)+t[pos].data[j];
+                    // _lva=(_lva<<8)+v.data[j];
+                    _lva<<=8;
+                    _lva+=v.data[j];
+                }
+
+                if(_lva != k){
+                    printf("%d-th key is wrong, should be %lx but got %lx\n", i, k, _lva);
+                    return 1;
+                }
+
                 if(t[pos]!=v){
                     printf("%d-th key is wrong\n", i);
                     printf("error: wrong value\n");
@@ -616,8 +729,42 @@ struct LMPTHashBuilder{
                 printf("wrong type\n");
                 return 1;
             }
+
+            // break;
         }
         printf("    all keys are correct\n");
         return 0;
     }
 };
+
+
+void parse_MSR_Cambridge(std::vector<uint64_t>&  uniq_lpn, std::vector<uint64_t>& lpns, std::string filename){
+    // hash table for unique lpn
+    std::unordered_set<uint64_t> ht;
+
+    // open file with name "filename", and read by lines
+    std::ifstream file(filename);
+    std::string line;
+    uint64_t timestamp, offset, size, t0;
+    char trace_name[100];
+    char op[100];
+    int trace_id;
+    uint64_t lpn;
+    while (std::getline(file, line)) {
+        sscanf(line.c_str(), "%lu,%100[^,],%d,%100[^,],%lu,%lu,%lu\n", &timestamp,trace_name,&trace_id,op,&offset,&size,&t0);
+        for(int i=0;i<size/page_size;i++){
+            lpn=offset/page_size+i;
+            lpns.push_back(lpn);
+            ht.insert(lpn);
+        }
+    }
+
+    // get unique lpn
+    for (auto it = ht.begin(); it != ht.end(); it++) {
+        uniq_lpn.push_back(*it);
+    }
+    // sort uniq_lpn
+    std::sort(uniq_lpn.begin(), uniq_lpn.end());
+    file.close();
+    return;   
+}
