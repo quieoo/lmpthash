@@ -3,10 +3,13 @@
 #include <iostream>
 #include <vector>
 #include "include/pthash.hpp"
+#include "include/utils/logger.hpp"
+#include "pgm/pgm_index.hpp"
+
 
 typedef pthash::single_phf<pthash::murmurhash2_64, pthash::compact, false> pthash_type;
 
-
+#define ANSI_CURSOR_UP(n)    "\033[" #n "A"
 
 template <typename Key>
 struct MonoSegment{
@@ -78,7 +81,7 @@ struct MonoSegmentMerger{
             segments.back().last_key.push_back(*it);
             ++it;
         }
-        printf("load keys: %lu, get %lu monotonical segments\n", keys.size(), segments.size());
+        printf("    load keys: %lu, get %lu monotonical segments\n", keys.size(), segments.size());
     }
 
     void mockkeys(){
@@ -144,7 +147,7 @@ struct MonoSegmentMerger{
 
     void GreedyMerge(){
         const uint32_t N=segments.size();
-        printf("Current number of segments: %u, merge to (P=%u) segments\n", N, P);
+        printf("    Current number of segments: %u, merge to (P=%u) segments\n", N, P);
         if(N<=P){
             return;
         }
@@ -271,7 +274,7 @@ struct MonoSegmentMerger{
             }
         }
         
-        printf("num_denseg_segs: %ld, num_sparse_segs: %ld, num_keys_dense: %ld, num_keys_sparse: %ld, num_slots_sparse: %ld, max_dense_seg: %ld, max_sparse_seg: %ld\n", num_denseg_segs, num_sparse_segs , num_keys_dense, num_keys_sparse, num_slots_sparse, max_dense_seg, max_sparse_seg);
+        printf("    num_denseg_segs: %ld, num_sparse_segs: %ld, num_keys_dense: %ld, num_keys_sparse: %ld, num_slots_sparse: %ld, max_dense_seg: %ld, max_sparse_seg: %ld\n", num_denseg_segs, num_sparse_segs , num_keys_dense, num_keys_sparse, num_slots_sparse, max_dense_seg, max_sparse_seg);
 
     }
 };
@@ -306,6 +309,8 @@ struct lmpthash_config{
             else if(name=="pilot_search_threshold") pilot_search_threshold=std::stoi(value);
             else if(name=="dynamic_alpha") dynamic_alpha=std::stoi(value);
             else if(name=="alpha_limits") alpha_limits=std::stof(value);
+            else if(name=="left_epsilon") left_epsilon=std::stoi(value);
+            else if(name=="right_epsilon") right_epsilon=std::stoi(value);
         }
     }
 
@@ -322,12 +327,18 @@ struct lmpthash_config{
     uint32_t pilot_search_threshold;
     bool dynamic_alpha;
     double alpha_limits;
+
+    // Learned Index parameters
+    int left_epsilon;
+    int right_epsilon;
+
 };
 
 struct LMPTSegment{
     uint64_t first_key;
     uint32_t slope;
-    uint64_t next_addr;
+    uint64_t next_addr=0;
+    uint8_t seg_type;
 };
 
 
@@ -336,20 +347,30 @@ struct LMPTHashBuilder{
     std::vector<LMPTSegment> lmpt_segments;
     MonoSegmentMerger<Key> ms_merger;
     lmpthash_config cfg;
-
+    pthash::simple_logger slogger;
+    std::unordered_map<uint32_t, pthash_type> pthash_map;
+    pgm::PGMIndex<Key> pgm_index;
+    int epsilon;
 
     LMPTHashBuilder(lmpthash_config _cfg){
         cfg=_cfg;
         ms_merger=MonoSegmentMerger<Key>(cfg.alpha, cfg.beta, cfg.gamma, cfg.P);
+        slogger.log_level=1;
     }
 
-    int Segmentation(std::vector<Key>& keys){
-        printf("## Segmentation ##\n");
-        printf("   # alpha: %f, beta: %f, gamma: %f, P: %d\n", cfg.alpha, cfg.beta, cfg.gamma, cfg.P);
+    int Segmenting(std::vector<Key>& keys){
+        printf("## Segmentating ##\n");
+        printf("    # alpha: %f, beta: %f, gamma: %f, P: %d\n", cfg.alpha, cfg.beta, cfg.gamma, cfg.P);
         // merge segments
         ms_merger.LoadKeys(keys);
         ms_merger.GreedyMerge();
-        ms_merger.ScoreSegs();        
+        ms_merger.ScoreSegs();
+
+        lmpt_segments.resize(ms_merger.segments.size());
+        for(uint32_t i=0; i<ms_merger.segments.size(); ++i){
+            MonoSegment<Key>& seg=ms_merger.segments[i];
+            lmpt_segments[i].first_key=seg.first_key[0];
+        }
         return 0;
     }
 
@@ -357,7 +378,6 @@ struct LMPTHashBuilder{
         printf("## Bucketing ##\n");
         printf("    # hashed_num_bucket_c: %f, table_size_alpha: %f, max_bucket_size: %d, pilot_search_threshold: %d, dynamic_alpha: %d, alpha_limits: %f\n", cfg.hashed_num_bucket_c, cfg.table_size_alpha, cfg.max_bucket_size, cfg.pilot_search_threshold, cfg.dynamic_alpha, cfg.alpha_limits);
         uint32_t seg_num=ms_merger.segments.size();
-        lmpt_segments.resize(seg_num);
 
         pthash::build_configuration config;
         config.c = cfg.hashed_num_bucket_c;
@@ -371,17 +391,17 @@ struct LMPTHashBuilder{
 
         config.dynamic_alpha = cfg.dynamic_alpha;
         config.alpha_limits = cfg.alpha_limits;
-
+        printf("    Progress: \n");
         for(uint32_t i=0; i<seg_num; ++i){
+            printf("\r    %d / %d\n", i, seg_num);
+            std::cout<<ANSI_CURSOR_UP(1);
             MonoSegment<Key>& seg=ms_merger.segments[i];
             if(seg.first_key.size()==1){
                 // accurate segment
-                lmpt_segments[i].first_key=seg.first_key[0];
                 lmpt_segments[i].slope=0;
             }else{
-                printf("Segment-%d\n", i);
+                // printf("Segment-%d ", i);
                 // approximate segment
-                lmpt_segments[i].first_key=seg.first_key[0];
                 // get keys
                 std::vector<Key> keys;
                 for(uint32_t j=0; j<seg.first_key.size(); ++j){
@@ -394,14 +414,210 @@ struct LMPTHashBuilder{
                 pthash_type f;
                 auto ret=f.build_in_internal_memory(keys.begin(), keys.size(), config);
                 if(ret.searching_seconds==-1){
-                    printf("Failed to create a linear mapping pthash, transfer to hash mapping \n");
+                    // printf("Failed to create a linear mapping pthash, transfer to hash mapping \n");
                     config.LinearMapping=false;
                     ret=f.build_in_internal_memory(keys.begin(), keys.size(), config);
                 }
-                // break;
+                lmpt_segments[i].slope=f.get_slope();
+                pthash_map[i]=f;
+                // printf("slope: %ld\n", lmpt_segments[i].slope);
             }
         }
 
+        return 0;
+    }
+
+    int Tabling(std::vector<Key>& keys, std::vector<Value>& values){
+        printf("## Tabling ##\n");
+        // make sure vector keys are sorted
+        assert(std::is_sorted(keys.begin(), keys.end()));
+        // divide keys into segments according to first_key in lmpt_segments
+        uint32_t seg_id=0;
+        uint64_t l=0,r=0;
+        printf("    # num of segments: %d\n", lmpt_segments.size());
+        while(l<keys.size()){
+            Key last_key=seg_id<(lmpt_segments.size()-1)?lmpt_segments[seg_id+1].first_key:UINT64_MAX;
+            while(r<keys.size() && keys[r]<last_key){
+                ++r;
+            }
+            slogger.func_log(0, "Segment-%d. num_of keys: %ld, %ld - %ld = %ld", seg_id, r-l, keys[r], keys[l], keys[r]-keys[l]);            
+            if(lmpt_segments[seg_id].slope==0){
+                // accurate segment
+                slogger.func_log(0, ", [0] table_size: %ld\n", r-l);
+                // Value* sub_table=(Value*)malloc((r-l)*sizeof(Value));
+                Value* sub_table=new Value[r-l];
+
+                for(uint64_t i=l; i<r; ++i){
+                    Key k=keys[i];
+                    uint64_t pos=k-lmpt_segments[seg_id].first_key;
+                    sub_table[pos]=values[i];
+                    // if(pos==0){
+                    //     printf("seg_id: %d, key: %ld", seg_id, k);
+                    //     values[i].output();
+                    //     sub_table[pos].output();
+                    //     printf("\n");
+                    // }
+                }
+                lmpt_segments[seg_id].next_addr=(uint64_t)sub_table;
+                lmpt_segments[seg_id].seg_type=0;
+            }else{
+                // approximate segment
+                uint64_t table_size=pthash_map[seg_id].table_size();
+                slogger.func_log(0, ", [%u] table_size: %ld\n",2-(pthash_map[seg_id].is_linear_mapping()), table_size); 
+                // Value* sub_table=(Value*)malloc(table_size*sizeof(Value));
+                Value* sub_table=new Value[table_size];
+                std::unordered_set<Key> keys_set;
+                for(uint64_t i=l; i<r; ++i){
+                    Key k=keys[i];
+                    uint64_t pos=pthash_map[seg_id](k);
+
+                    //check if pos is identical
+                    if(keys_set.find(pos)!=keys_set.end()){
+                        printf("error: pos is identical\n");
+                        return -1;
+                    }
+                    keys_set.insert(pos);
+
+                    sub_table[pos]=values[i];
+                }
+                lmpt_segments[seg_id].next_addr=(uint64_t)sub_table;
+                lmpt_segments[seg_id].seg_type=2-(pthash_map[seg_id].is_linear_mapping());
+            }
+
+            ++seg_id;
+            l=r;
+        }
+        return 0;
+    }
+
+    int Cleaning(){
+        printf("## Cleaning ##\n");
+        uint32_t seg_num=lmpt_segments.size();
+        printf("    # segment table size: %ld\n", seg_num);
+        for(uint32_t i=0; i<seg_num; i++){
+            if(i==seg_num){
+                // printf("Break\n");
+                break;
+            }
+            // printf("    seg-%u/%u: %p\n", i,seg_num, lmpt_segments[i].next_addr);
+            if(lmpt_segments[i].next_addr!=0){
+                // free((void*)(lmpt_segments[i].next_addr));
+                Value* t=(Value*)(lmpt_segments[i].next_addr);
+                delete[] t;
+            }
+        }
+        return 0;
+    }
+
+
+    int Learning(){
+        printf("## Inner Indexing ##\n");
+        printf("    # segment table size: %ld, left_epsilon: %d, right_epsilon: %d\n", lmpt_segments.size(), cfg.left_epsilon, cfg.right_epsilon);
+        std::vector<Key> segment_offsets;
+        for(uint32_t i=0; i<lmpt_segments.size(); i++){
+            segment_offsets.push_back(lmpt_segments[i].first_key);
+        }
+        // make sure segment_offsets are sorted
+        assert(std::is_sorted(segment_offsets.begin(), segment_offsets.end()));
+
+        // binary search for a minimum PGM height
+        slogger.func_log(0, "    binary search for a minimum PGM height\n");
+        int min_height=INT32_MAX;
+        int l=cfg.left_epsilon, r=cfg.right_epsilon;
+        while(l<=r){
+            int mid=(l+r)/2;
+            pgm::PGMIndex<Key, 128> pgm(segment_offsets, mid, mid);
+            int height=pgm.height();
+            slogger.func_log(0, "    mid: %d, height: %d\n", mid, height);
+            if(height<min_height){
+                min_height=height;
+                l=mid+1;
+            }else{
+                r=mid-1;
+            }
+        }
+
+        // binary search for a minimum epsilon that generates the minimum height
+        slogger.func_log(0, "    binary search for a minimum epsilon that generates the minimum height\n");
+        l=cfg.left_epsilon, r=cfg.right_epsilon;
+        int ep=-1;
+        while(l<=r){
+            int mid=(l+r)/2;
+            pgm::PGMIndex<Key, 64> pgm(segment_offsets, mid, mid);
+            int height=pgm.height();
+            slogger.func_log(0, "    mid: %d, height: %d\n", mid, height);
+            if(height==min_height){
+                ep=mid;
+                r=mid-1;
+                pgm_index=pgm;
+            }else{
+                l=mid+1;
+            }
+        }
+        printf("    min_height: %d, min_epsilon: %d\n", min_height, ep);
+        if(ep==-1){
+            printf("        WARNING: can't find a valid epsilon\n");
+            return -1;
+        }
+        epsilon=ep;
+        return 0;
+    }
+
+    int Verifing(std::vector<Key>& keys, std::vector<Value>& values){
+        printf("## Verifing ##\n");
+        for(uint64_t i=603729; i<keys.size(); i++){
+            slogger.func_log(2, "    %ld-th key: %lu\n", i, keys[i]);
+            Key k=keys[i];
+            Value v=values[i];
+
+            auto range=pgm_index.search(k);
+            auto lo=range.lo;
+            auto hi=range.hi;
+            if(hi >= lmpt_segments.size()) hi=lmpt_segments.size()-1;
+            int ans=-1;
+            // binary search for a maximum segment whose first_key <= k
+            while(lo<=hi){
+                auto mid=(lo+hi)/2;
+                slogger.func_log(2, " seg id: %ld, first_key: %ld, k: %ld\n",mid, lmpt_segments[mid].first_key, k);
+                if(lmpt_segments[mid].first_key>k){
+                    hi=mid-1;
+                }else{
+                    lo=mid+1;
+                    ans=mid;
+                }
+            }
+            if(ans==-1){
+                printf("error: segment not found\n");
+                return 1;
+            }
+            slogger.func_log(2, "    found seg_id: %ld\n", ans);
+            int64_t pos=-1;
+            if(lmpt_segments[ans].seg_type==0){
+                pos=k-lmpt_segments[ans].first_key;
+                slogger.func_log(2, "    [%d] pos: %u\n",lmpt_segments[ans].seg_type, pos);
+            }else if(lmpt_segments[ans].seg_type==1 || lmpt_segments[ans].seg_type==2){
+                pos=pthash_map[ans](k);
+            }
+
+            if(pos!=-1){
+                Value* t=(Value*)(lmpt_segments[ans].next_addr);
+                if(t[pos]!=v){
+                    printf("%d-th key is wrong\n", i);
+                    printf("error: wrong value\n");
+                    printf("shoud be: ");
+                    v.output();
+                    printf(" but got:");
+                    t[pos].output();
+                    printf("\n");
+                    return 1;
+                }
+            }else{
+                printf("%d-th key is wrong\n", i);
+                printf("wrong type\n");
+                return 1;
+            }
+        }
+        printf("    all keys are correct\n");
         return 0;
     }
 };

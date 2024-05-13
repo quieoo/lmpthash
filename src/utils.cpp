@@ -8,6 +8,7 @@
 #include <iostream>
 #include <algorithm>
 #include "lmpthash.hpp"
+#include <iomanip>
 
 const int page_size = 4096;
 
@@ -151,7 +152,25 @@ void test_greedy() {
 }
 
 
+struct PhyAddr{
+    uint8_t data[20];
+    PhyAddr(uint64_t LogicAddr){
+        for(int i=0;i<8;i++){
+            data[7-i]=LogicAddr>>i*8;
+        }
+    }
+    PhyAddr() = default;
 
+    bool operator!=(const PhyAddr& rhs) const {
+        return memcmp(data, rhs.data, 20)!=0;
+    }
+
+    void output(){
+        for(int i=0;i<20;i++){
+            printf("%02x ", data[i]);
+        }
+    }
+};
 
 int main(int argc, char** argv){
     printf("Utils Usage\n");
@@ -191,12 +210,21 @@ int main(int argc, char** argv){
         std::vector<uint64_t> lpns;
         parse_MSR_Cambridge(uniq_lpn, lpns, std::string(argv[2]));
         printf("parse: %s, %lu lpns, %lu uniq lpns\n", argv[2], lpns.size(), uniq_lpn.size());
+        std::vector<PhyAddr> ppns;
+        for(uint64_t i=0;i<lpns.size();i++){
+            ppns.push_back(PhyAddr(lpns[i]));
+        }
 
         lmpthash_config cfg;
         cfg.load_config(std::string(argv[3]));
-        LMPTHashBuilder<uint64_t, uint64_t> builder(cfg);
-        builder.Segmentation(uniq_lpn);
+        LMPTHashBuilder<uint64_t, PhyAddr> builder(cfg);
+        builder.Segmenting(uniq_lpn);
+        builder.Learning();
         builder.Bucketing();
+        builder.Tabling(uniq_lpn, ppns);
+
+        builder.Verifing(uniq_lpn, ppns);
+        builder.Cleaning();
     }
     else{
         printf("unknown operation\n");

@@ -9,24 +9,29 @@ void test_pgm(){
     // Generate some random data
     std::vector<int> data(1000000);
     std::generate(data.begin(), data.end(), std::rand);
-    data.push_back(42);
+    int remove=data[0];
+    data.erase(data.begin());
     std::sort(data.begin(), data.end());
 
     // Construct the PGM-index
     const int epsilon = 128; // space-time trade-off parameter
-    pgm::PGMIndex<int, epsilon> index(data);
+    pgm::PGMIndex<int, epsilon> index(data, 5, 5);
 
     // Query the PGM-index
-    auto q = 42;
+    auto q = remove;
     auto range = index.search(q);
     auto lo = data.begin() + range.lo;
     auto hi = data.begin() + range.hi;
-    std::cout << *std::lower_bound(lo, hi, q)<<std::endl;
-    std::cout<<"pgm index test done"<<std::endl;
+    std::cout<<"remove: "<<remove<<std::endl;
+    // output from lo to hi
+    for (auto it = lo; it != hi; ++it) {
+        std::cout << *it << std::endl;
+    }
 
     // query all points and count average query latency
-    
 }
+
+
 
 int main() {
     using namespace pthash;

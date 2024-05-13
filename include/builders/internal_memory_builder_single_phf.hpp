@@ -39,13 +39,13 @@ struct internal_memory_builder_single_phf {
 
     template <typename RandomAccessIterator>
     build_timings build_with_linear_mapping(RandomAccessIterator keys, uint64_t num_keys, build_configuration const& config){
-        sloger.log("number keys: %lu\n", num_keys);
+        sloger.func_log(1, "number keys: %lu\n", num_keys);
         m_num_keys = num_keys;
         m_seed=config.seed;
         
         build_timings time;
-
-        uint64_t* temp_pilots=(uint64_t*)malloc(m_num_keys*sizeof(uint64_t));
+        // set to 2*num_keys to avoid over boundary
+        uint64_t* temp_pilots=(uint64_t*)malloc(m_num_keys*2*sizeof(uint64_t));
 
         //printf("searching for a maximum bucket size with a searching threshold: %ld\n", config.pilot_search_threshold);
         // binary search for a maximum bucket size that can succssfully find out pilots
@@ -58,7 +58,7 @@ struct internal_memory_builder_single_phf {
             uint64_t mid=(lo+hi)/2;
             uint64_t num_bucket= num_keys/mid;
             if(num_bucket==0)    num_bucket=1;
-            sloger.log("try B: %ld, bucket number %ld\n", mid, num_bucket);  
+            sloger.func_log(1, "try B: %ld, bucket number %ld\n", mid, num_bucket);  
 
             // get bucket ids 
             std::pair<uint64_t, uint64_t> bucketed;
@@ -84,7 +84,7 @@ struct internal_memory_builder_single_phf {
             while(1){
                 uint64_t table_size = static_cast<double>(num_keys) / alpha;
                 if ((table_size & (table_size - 1)) == 0) table_size += 1;
-                sloger.log("    table size: %lu, alpha: %lf\n", table_size, alpha);
+                sloger.func_log(1, "    table size: %lu, alpha: %lf\n", table_size, alpha);
                 auto buckets_iterator = buckets.begin();
                 memset(temp_pilots, 0, num_bucket*sizeof(uint64_t));
                 // std::vector<uint64_t> temp_pilots;
@@ -109,7 +109,7 @@ struct internal_memory_builder_single_phf {
                 break;
             }
             if(found_in_alpha_limits){
-                // printf("    current num_bucket works: %d\n", num_bucket);
+                sloger.func_log(1, "    current num_bucket works: %d\n", num_bucket);
                 m_num_buckets = num_bucket;
                 m_bucketer.set_divisor(bucketed.first);
                 m_bucketer.set_min_key(bucketed.second);
@@ -120,15 +120,16 @@ struct internal_memory_builder_single_phf {
                 }
                 lo=mid+1;
             }else{
-                // printf("    searching threshold failed\n");
+                sloger.func_log(1, "    searching threshold failed\n");
                 hi=mid-1;
             }
-            //printf("finished searching B: %ld\n", mid);
+            sloger.func_log(1, "finished searching B: %ld\n", mid);
         }
-
+        sloger.func_log(1, "final num_bucket: %ld\n", m_num_buckets);
         free(temp_pilots);
+        sloger.func_log(1, "build time: %lf seconds\n", time.searching_seconds);
         if(m_num_buckets==0){
-            // printf("failed to find a mimimum bucket number\n");
+            sloger.func_log(1, "failed to find a mimimum bucket number\n");
             time.searching_seconds=-1;
         }else{
             time.searching_seconds=0;
@@ -524,7 +525,7 @@ private:
                 //     return {0,0};
                 // }
             }
-            sloger.log("[%u]%lu-%lu\n",bucket_id,keys[i], hash.first());
+            // sloger.func_log(1, "[%u]%lu-%lu\n",bucket_id,keys[i], hash.first());
         }
 
         std::sort(pairs_blocks[0].begin(), pairs_blocks[0].end());

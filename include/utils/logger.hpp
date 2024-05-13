@@ -64,7 +64,7 @@ private:
 };
 
 struct simple_logger{
-    simple_logger(int log_level = 0) : log_level(log_level) {}
+    simple_logger(int log_level = 1) : log_level(log_level), allowed_func_ids({}) {}
 
     // accept a formated string and output
     template<typename... Args>
@@ -76,7 +76,20 @@ struct simple_logger{
         }
     }
 
+    template<typename... Args>
+    void func_log(int func_id, const char* fmt, const Args&... args) const {
+        if (log_level > 0) {
+            // check if the func_id is allowed
+            if (std::find(allowed_func_ids.begin(), allowed_func_ids.end(), func_id) != allowed_func_ids.end()) {
+                char buf[1024];
+                snprintf(buf, sizeof(buf), fmt, args...);
+                std::cout << buf;
+            }
+        }
+    }
+
     int log_level;
+    std::vector<int> allowed_func_ids;
 };
 
 }  // namespace pthash

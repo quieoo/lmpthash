@@ -65,6 +65,10 @@ struct skew_bucketer {
         return (key-min_key)/divisor;
     }
 
+    uint64_t get_divisor(){
+        return divisor;
+    }
+
 private:
     uint64_t m_num_dense_buckets, m_num_sparse_buckets;
     __uint128_t m_M_num_dense_buckets, m_M_num_sparse_buckets;

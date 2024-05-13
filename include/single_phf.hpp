@@ -43,7 +43,7 @@ struct single_phf {
         // printf("    table size: %lu\n", m_table_size);
         m_bucketer = builder.bucketer();
         // printf("    num buckets: %lu\n", m_bucketer.num_buckets());
-        printf("keys_per_bucket: %f\n", double(m_num_keys) / double(m_bucketer.num_buckets()));
+        // printf("keys_per_bucket: %f\n", double(m_num_keys) / double(m_bucketer.num_buckets()));
         m_pilots.encode(builder.pilots().data(), m_bucketer.num_buckets());
         // printf("    pilots size: %lu B\n", (m_pilots.num_bits())/8);
         if (Minimal and m_num_keys < m_table_size) {
@@ -118,6 +118,21 @@ struct single_phf {
         visitor.visit(m_bucketer);
         visitor.visit(m_pilots);
         visitor.visit(m_free_slots);
+    }
+
+    uint64_t get_slope(){
+        if(linear_mapping){
+            return m_bucketer.get_divisor();
+        }else{
+            return m_bucketer.num_buckets();
+        }
+    }
+    uint8_t is_linear_mapping(){
+        if(linear_mapping){
+            return 1;
+        }else{
+            return 0;
+        }
     }
 
 private:

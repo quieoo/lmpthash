@@ -159,7 +159,7 @@ protected:
 public:
 
     static constexpr size_t epsilon_value = Epsilon;
-
+    size_t variable_epsilon_value;  
     /**
      * Constructs an empty index.
      */
@@ -170,6 +170,11 @@ public:
      * @param data the vector of keys to be indexed, must be sorted
      */
     explicit PGMIndex(const std::vector<K> &data) : PGMIndex(data.begin(), data.end()) {}
+
+    PGMIndex(const std::vector<K> &data, size_t epsilon, size_t epsilon_recursive) : n(data.size()), first_key(n ? data[0] : K(0)), segments(), levels_offsets() {
+        build(data.begin(), data.end(), epsilon,epsilon_recursive, segments, levels_offsets);
+        variable_epsilon_value = epsilon;
+    }
 
     /**
      * Constructs the index on the sorted keys in the range [first, last).
@@ -184,6 +189,15 @@ public:
         build(first, last, Epsilon, EpsilonRecursive, segments, levels_offsets);
     }
 
+    PGMIndex& operator=(const PGMIndex& e){
+        n=e.n;
+        first_key=e.first_key;
+        segments=e.segments;
+        levels_offsets=e.levels_offsets;
+        return *this;
+    }
+
+
     /**
      * Returns the approximate position and the range where @p key can be found.
      * @param key the value of the element to search for
@@ -193,9 +207,13 @@ public:
         auto k = std::max(first_key, key);
         auto it = segment_for_key(k);
         auto pos = std::min<size_t>((*it)(k), std::next(it)->intercept);
-        auto lo = PGM_SUB_EPS(pos, Epsilon);
-        auto hi = PGM_ADD_EPS(pos, Epsilon, n);
-        return {pos, lo, hi};
+        if(variable_epsilon_value==0){
+            auto lo = PGM_SUB_EPS(pos, Epsilon);
+            auto hi = PGM_ADD_EPS(pos, Epsilon, n);
+            return {pos, lo, hi};
+        }else{
+            return {pos, PGM_SUB_EPS(pos, variable_epsilon_value), PGM_ADD_EPS(pos, variable_epsilon_value, n) };
+        }
     }
 
     /**
