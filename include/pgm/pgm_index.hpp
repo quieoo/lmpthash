@@ -124,6 +124,14 @@ protected:
             last_n = build_level(epsilon_recursive, in_fun_rec, out_fun, last_n);
             levels_offsets.push_back(segments.size());
         }
+
+        // // output segments and level_offsets
+        // for(int i=0;i<segments.size();i++){
+        //     printf("key: %d, intercept: %d\n", segments[i].key, segments[i].intercept);
+        // }
+        // for(int i=0;i<levels_offsets.size();i++){
+        //     printf("offset: %d\n", levels_offsets[i]);
+        // }
     }
 
     /**

@@ -9,6 +9,10 @@ int main(int argc, char** argv) {
     parse_configuration("lmpthash_config", &cfg, &lvas, &pas, &num_lva, &querys, &num_querys);
 
     void* index = build_index(lvas, pas, num_lva, &cfg);
+    if(index==NULL){
+        printf("error building index\n");
+        return -1;
+    }
 
     PhysicalAddr pa;
     for(int i = 0; i < num_querys; ++i) {
@@ -33,6 +37,7 @@ int main(int argc, char** argv) {
             printf("error getting pa\n");
             return -1;
         }
+        break;
     }
     printf("\ntest passed\n");
 

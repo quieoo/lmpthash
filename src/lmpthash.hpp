@@ -377,6 +377,7 @@ struct LMPTHashBuilder{
         for(uint32_t i=0; i<ms_merger.segments.size(); ++i){
             MonoSegment<Key>& seg=ms_merger.segments[i];
             lmpt_segments[i].first_key=seg.first_key[0];
+            printf("    seg %d, first_key: %llu\n", i, lmpt_segments[i].first_key);
         }
         return 0;
     }

@@ -69,6 +69,7 @@ void* build_index(LVA* lvas, PhysicalAddr* pas, uint64_t num, clmpthash_config* 
     std::vector<PhysicalAddr> values(pas, pas+num);
 
     builder->Segmenting(keys);
+    return NULL;
     builder->Learning();
     builder->Multi_Bucketing();
     builder->Tabling(keys, values);
@@ -92,6 +93,7 @@ int get_pa(LVA lva, void* index, PhysicalAddr* pa){
     int ans=-1;
     while(lo <= hi){
         auto mid=(lo+hi)/2;
+        slogger.func_log(4, "mid: %lu, first_key: %lu\n", mid, builder->lmpt_segments[mid].first_key);
         if(builder->lmpt_segments[mid].first_key <= lva){
             ans=mid;
             lo=mid+1;
