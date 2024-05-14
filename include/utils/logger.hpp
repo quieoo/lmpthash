@@ -64,7 +64,7 @@ private:
 };
 
 struct simple_logger{
-    simple_logger(int log_level = 1) : log_level(log_level), allowed_func_ids({4}) {}
+    simple_logger(int log_level = 1) : log_level(log_level), allowed_func_ids({}) {}
 
     // accept a formated string and output
     template<typename... Args>

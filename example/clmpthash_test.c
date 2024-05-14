@@ -6,7 +6,7 @@ int main(int argc, char** argv) {
     PhysicalAddr* pas;
     LVA* querys;
     uint64_t num_lva, num_querys;
-    parse_configuration("lmpthash_config", &cfg, &lvas, &pas, &num_lva, &querys, &num_querys);
+    parse_configuration(argv[1], &cfg, &lvas, &pas, &num_lva, &querys, &num_querys);
 
     void* index = build_index(lvas, pas, num_lva, &cfg);
     if(index==NULL){

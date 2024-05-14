@@ -69,7 +69,6 @@ void* build_index(LVA* lvas, PhysicalAddr* pas, uint64_t num, clmpthash_config* 
     std::vector<PhysicalAddr> values(pas, pas+num);
 
     builder->Segmenting(keys);
-    return NULL;
     builder->Learning();
     builder->Multi_Bucketing();
     builder->Tabling(keys, values);

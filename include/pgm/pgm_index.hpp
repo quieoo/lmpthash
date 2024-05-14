@@ -202,6 +202,7 @@ public:
         first_key=e.first_key;
         segments=e.segments;
         levels_offsets=e.levels_offsets;
+        variable_epsilon_value=e.variable_epsilon_value;
         return *this;
     }
 
@@ -215,6 +216,7 @@ public:
         auto k = std::max(first_key, key);
         auto it = segment_for_key(k);
         auto pos = std::min<size_t>((*it)(k), std::next(it)->intercept);
+        printf("pos: %d, variable_epsilon_value: %d\n", pos, variable_epsilon_value);
         if(variable_epsilon_value==0){
             auto lo = PGM_SUB_EPS(pos, Epsilon);
             auto hi = PGM_ADD_EPS(pos, Epsilon, n);
