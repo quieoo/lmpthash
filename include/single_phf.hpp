@@ -57,27 +57,39 @@ struct single_phf {
     uint64_t operator()(T const& key) const {
         if(linear_mapping){
             uint64_t bucket=m_bucketer.linear_bucket(key);
-            // printf("key: %lu, bucket: %lu ", key, bucket);
+            // if(key==0x4a549) printf("key: %lu, bucket: %lu ", key, bucket);
             auto hash=Hasher::hash(key, m_seed);
-            // printf("hash: %lu-%lu ", hash.first(), hash.second());
+            // if(key==0xc1240) printf("hash: %lu-%lu ", hash.first(), hash.second());
             uint64_t pilot = m_pilots.access(bucket);
-            // printf("pilot: %lu ", pilot);
+            // if(key==0xc1240) printf("pilot: %lu ", pilot);
             uint64_t hashed_pilot = default_hash64(pilot, m_seed);
+            // if(key==0xc1240) printf("hashed_pilot: %lu ", hashed_pilot);
             uint64_t p = fastmod::fastmod_u64(hash.second() ^ hashed_pilot, m_M, m_table_size);
             if constexpr (Minimal) {
                 if (PTHASH_LIKELY(p < num_keys())) return p;
                 return m_free_slots.access(p - num_keys());
             }
-            // printf("p: %lu\n", p);
+            // if(key==0xc1240) printf("p: %lu\n", p);
             return p;
         }
 
         auto hash = Hasher::hash(key, m_seed);
-        return position(hash);
+        // if(key==0x4a549) printf("key: %lu, hash: %lu\n", key, hash);
+        uint64_t bucket = m_bucketer.bucket(hash.first());
+        // if(key==0x4a549) printf("key: %lu, bucket: %lu\n", key, bucket);
+        uint64_t pilot = m_pilots.access(bucket);
+        uint64_t hashed_pilot = default_hash64(pilot, m_seed);
+        uint64_t p = fastmod::fastmod_u64(hash.second() ^ hashed_pilot, m_M, m_table_size);
+        if constexpr (Minimal) {
+            if (PTHASH_LIKELY(p < num_keys())) return p;
+            return m_free_slots.access(p - num_keys());
+        }
+        return p;
     }
 
     uint64_t position(typename Hasher::hash_type hash) const {
         uint64_t bucket = m_bucketer.bucket(hash.first());
+        
         uint64_t pilot = m_pilots.access(bucket);
         uint64_t hashed_pilot = default_hash64(pilot, m_seed);
         uint64_t p = fastmod::fastmod_u64(hash.second() ^ hashed_pilot, m_M, m_table_size);
@@ -133,6 +145,18 @@ struct single_phf {
         }else{
             return 0;
         }
+    }
+
+    size_t pilot_bytes() const {
+        return m_pilots.data_bytes();
+    }
+
+    void get_pilots(uint8_t* dst) const {
+        m_pilots.get_data(dst);
+    }
+
+    size_t get_pilot_width() const {
+        return m_pilots.get_width();
     }
 
 private:

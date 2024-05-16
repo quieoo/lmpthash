@@ -45,8 +45,7 @@ struct internal_memory_builder_single_phf {
         
         build_timings time;
         // set to 2*num_keys to avoid over boundary
-        uint64_t* temp_pilots=(uint64_t*)malloc(m_num_keys*2*sizeof(uint64_t));
-
+        uint64_t* temp_pilots=new uint64_t[m_num_keys*2];
         //printf("searching for a maximum bucket size with a searching threshold: %ld\n", config.pilot_search_threshold);
         // binary search for a maximum bucket size that can succssfully find out pilots
         uint64_t lo = 1, hi = config.max_bucket_size;
@@ -126,7 +125,9 @@ struct internal_memory_builder_single_phf {
             sloger.func_log(1, "finished searching B: %ld\n", mid);
         }
         sloger.func_log(1, "final num_bucket: %ld\n", m_num_buckets);
-        free(temp_pilots);
+        // free(temp_pilots);
+        delete[] temp_pilots;
+        
         sloger.func_log(1, "build time: %lf seconds\n", time.searching_seconds);
         if(m_num_buckets==0){
             sloger.func_log(1, "failed to find a mimimum bucket number\n");

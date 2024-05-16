@@ -5,30 +5,97 @@
 
 #include "pgm/pgm_index.hpp"
 
-void test_pgm(){
+void test_pgm_float(){
+    printf("test_pgm_float\n");
     // Generate some random data
     std::vector<int> data(1000000);
     std::generate(data.begin(), data.end(), std::rand);
-    int remove=data[0];
-    data.erase(data.begin());
-    std::sort(data.begin(), data.end());
+
+    std::vector<int> copyed;
+    for(int i=0;i<data.size();i++){
+        copyed.push_back(data[i]);
+    }
+    std::sort(copyed.begin(), copyed.end());
 
     // Construct the PGM-index
-    const int epsilon = 128; // space-time trade-off parameter
-    pgm::PGMIndex<int, epsilon> index(data, 5, 5);
-
-    // Query the PGM-index
-    auto q = remove;
-    auto range = index.search(q);
-    auto lo = data.begin() + range.lo;
-    auto hi = data.begin() + range.hi;
-    std::cout<<"remove: "<<remove<<std::endl;
-    // output from lo to hi
-    for (auto it = lo; it != hi; ++it) {
-        std::cout << *it << std::endl;
-    }
+    // const int epsilon = 128; // space-time trade-off parameter
+    pgm::PGMIndex<int,64,4,float> index(copyed, 5, 5);
 
     // query all points and count average query latency
+    // get current time
+    auto start = std::chrono::high_resolution_clock::now();
+    uint64_t steps=0;
+    for(int i=0;i<100000;i++){
+        auto range=index.search(data[i]);
+        auto lo=copyed.begin()+range.lo;
+        bool found=false;
+        while(lo!=copyed.end()){
+            if(*lo==data[i]){
+                found=true;
+                break;
+            }
+            lo++;
+            steps++;
+        }
+        
+        if(!found){
+            printf("%d-th key: %d not found\n", i, data[i]);
+        }
+    }
+
+
+    auto end=std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    std::cout<<"Average query latency: "<<(double)duration/(data.size())<<" us"<<std::endl;
+    std::cout<<"Average steps: "<<(double)steps/(data.size())<<std::endl;
+}
+void test_pgm_uint(){
+    printf("test_pgm_uint\n");
+    // Generate some random data
+    std::vector<int> data(1000000);
+    std::generate(data.begin(), data.end(), std::rand);
+
+    std::vector<int> copyed;
+    for(int i=0;i<data.size();i++){
+        copyed.push_back(data[i]);
+    }
+    std::sort(copyed.begin(), copyed.end());
+
+    // Construct the PGM-index
+    // const int epsilon = 128; // space-time trade-off parameter
+    pgm::PGMIndex<int,64,4,uint32_t> index(copyed, 5, 5);
+
+    // query all points and count average query latency
+    // get current time
+    auto start = std::chrono::high_resolution_clock::now();
+    uint64_t steps=0;
+    for(int i=0;i<100000;i++){
+        auto range=index.search(data[i]);
+        auto lo=copyed.begin()+range.lo;
+        bool found=false;
+        while(lo!=copyed.end()){
+            if(*lo==data[i]){
+                found=true;
+                break;
+            }
+            lo++;
+            steps++;
+        }
+        
+        if(!found){
+            printf("%d-th key: %d not found\n", i, data[i]);
+        }
+    }
+
+
+    auto end=std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    std::cout<<"Average query latency: "<<(double)duration/(data.size())<<" us"<<std::endl;
+    std::cout<<"Average steps: "<<(double)steps/(data.size())<<std::endl;
+}
+void test_pgm(){
+    test_pgm_float();
+    test_pgm_uint();
 }
 
 
@@ -37,6 +104,7 @@ int main() {
     using namespace pthash;
 
     test_pgm();
+    return 0;
 
     /* Generate 10M random 64-bit keys as input data. */
     static const uint64_t num_keys = 1000;

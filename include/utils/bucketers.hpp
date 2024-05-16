@@ -8,27 +8,31 @@ struct skew_bucketer {
     skew_bucketer() {}
 
     void init(uint64_t num_buckets) {
-        m_num_dense_buckets = constants::b * num_buckets;
-        m_num_sparse_buckets = num_buckets - m_num_dense_buckets;
-        m_M_num_dense_buckets = fastmod::computeM_u64(m_num_dense_buckets);
-        m_M_num_sparse_buckets = fastmod::computeM_u64(m_num_sparse_buckets);
+        // m_num_dense_buckets = constants::b * num_buckets;
+        // m_num_sparse_buckets = num_buckets - m_num_dense_buckets;
+        // m_M_num_dense_buckets = fastmod::computeM_u64(m_num_dense_buckets);
+        // m_M_num_sparse_buckets = fastmod::computeM_u64(m_num_sparse_buckets);
+        m_num_buckets=num_buckets;
     }
 
     inline uint64_t bucket(uint64_t hash) const {
-        static const uint64_t T = constants::a * UINT64_MAX;
-        return (hash < T) ? fastmod::fastmod_u64(hash, m_M_num_dense_buckets, m_num_dense_buckets)
-                          : m_num_dense_buckets + fastmod::fastmod_u64(hash, m_M_num_sparse_buckets,
-                                                                       m_num_sparse_buckets);
+        if(m_num_buckets !=0){
+            return hash % m_num_buckets;
+        }else{
+            printf("error: bucket_num=0\n");
+            return 0;
+        }
+
+        // static const uint64_t T = constants::a * UINT64_MAX;
+        // return (hash < T) ? fastmod::fastmod_u64(hash, m_M_num_dense_buckets, m_num_dense_buckets)
+        //                   : m_num_dense_buckets + fastmod::fastmod_u64(hash, m_M_num_sparse_buckets,
+        //                                                                m_num_sparse_buckets);
     }
 
     
 
     uint64_t num_buckets() const {
-        if(m_num_buckets == 0){
-            return m_num_dense_buckets + m_num_sparse_buckets;
-        }else{
-            return m_num_buckets;
-        }
+        return m_num_buckets;
     }
 
     size_t num_bits() const {

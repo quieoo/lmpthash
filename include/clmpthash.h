@@ -48,11 +48,33 @@ typedef struct clmpthash_config{
     int right_epsilon;
 }clmpthash_config;
 
+typedef struct pgm_segment{
+    uint64_t key;
+    uint32_t slope;
+    uint32_t intercept;
+}pgm_segment;
+static uint32_t uintfloat_mask = ((uint32_t)1 << 31);
+
+typedef struct htl_segment{
+    uint64_t addr;
+    uint64_t meta;
+}htl_segment;
+
+
+
 void parse_configuration(char* config_path, clmpthash_config* cfg, LVA** lvas, PhysicalAddr** pas, uint64_t* num_lva, LVA** querys, uint64_t* num_querys);
+void clean_bufs(LVA* lvas, PhysicalAddr* pas, LVA* querys);
+
 
 void* build_index(LVA* lvas, PhysicalAddr* pas, uint64_t num, clmpthash_config* cfg);
 int get_pa(LVA lva, void* index, PhysicalAddr* pa);
 int clean_index(void* index);
+
+
+void* offload_index(void* index);
+int clean_offloaded_index(void* inner_index);
+
+
 
 #ifdef __cplusplus
 }

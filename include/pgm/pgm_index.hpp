@@ -32,6 +32,8 @@ namespace pgm {
 #define PGM_SUB_EPS(x, epsilon) ((x) <= (epsilon) ? 0 : ((x) - (epsilon)))
 #define PGM_ADD_EPS(x, epsilon, size) ((x) + (epsilon) + 2 >= (size) ? (size) : (x) + (epsilon) + 2)
 
+static uint32_t uintfloat_mask=((uint32_t)1 << 31);
+
 /**
  * A struct that stores the result of a query to a @ref PGMIndex, that is, a range [@ref lo, @ref hi)
  * centered around an approximate position @ref pos of the sought key.
@@ -76,6 +78,7 @@ protected:
     struct Segment;
 
     size_t n;                           ///< The number of elements this index was built on.
+public:
     K first_key;                        ///< The smallest element.
     std::vector<Segment> segments;      ///< The segments composing the index.
     std::vector<size_t> levels_offsets; ///< The starting position of each level in segments[], in reverse order.
@@ -164,10 +167,38 @@ protected:
         return it;
     }
 
+    auto segment_for_key_with_var_ep(const K &key) const {
+        if (variable_er == 0) {
+            return std::prev(std::upper_bound(segments.begin(), segments.begin() + segments_count(), key));
+        }
+
+        auto it = segments.begin() + *(levels_offsets.end() - 2);
+        for (auto l = int(height()) - 2; l >= 0; --l) {
+            auto level_begin = segments.begin() + levels_offsets[l];
+            auto pos = std::min<size_t>((*it)(key), std::next(it)->intercept);
+            auto lo = level_begin + PGM_SUB_EPS(pos, variable_er + 1);
+
+            static constexpr size_t linear_search_threshold = 8 * 64 / sizeof(Segment);
+            if (variable_er <= linear_search_threshold) {
+                for (; std::next(lo)->key <= key; ++lo)
+                    continue;
+                it = lo;
+            } else {
+                auto level_size = levels_offsets[l + 1] - levels_offsets[l] - 1;
+                auto hi = level_begin + PGM_ADD_EPS(pos, variable_er, level_size);
+                it = std::prev(std::upper_bound(lo, hi, key));
+            }
+        }
+        return it;
+    }
+
 public:
 
     static constexpr size_t epsilon_value = Epsilon;
     size_t variable_epsilon_value;  
+    size_t variable_er;
+
+
     /**
      * Constructs an empty index.
      */
@@ -182,6 +213,7 @@ public:
     PGMIndex(const std::vector<K> &data, size_t epsilon, size_t epsilon_recursive) : n(data.size()), first_key(n ? data[0] : K(0)), segments(), levels_offsets() {
         build(data.begin(), data.end(), epsilon,epsilon_recursive, segments, levels_offsets);
         variable_epsilon_value = epsilon;
+        variable_er = epsilon_recursive;
     }
 
     /**
@@ -214,15 +246,18 @@ public:
      */
     ApproxPos search(const K &key) const {
         auto k = std::max(first_key, key);
-        auto it = segment_for_key(k);
-        auto pos = std::min<size_t>((*it)(k), std::next(it)->intercept);
-        printf("pos: %d, variable_epsilon_value: %d\n", pos, variable_epsilon_value);
-        if(variable_epsilon_value==0){
+        if(variable_epsilon_value==0 && variable_er==0){
+            auto it = segment_for_key(k);
+            auto pos = std::min<size_t>((*it)(k), std::next(it)->intercept);
             auto lo = PGM_SUB_EPS(pos, Epsilon);
             auto hi = PGM_ADD_EPS(pos, Epsilon, n);
             return {pos, lo, hi};
         }else{
-            return {pos, PGM_SUB_EPS(pos, variable_epsilon_value), PGM_ADD_EPS(pos, variable_epsilon_value, n) };
+            auto it=segment_for_key_with_var_ep(k);
+            auto pos = std::min<size_t>((*it)(k), std::next(it)->intercept);
+            auto lo = PGM_SUB_EPS(pos, variable_epsilon_value);
+            auto hi = PGM_ADD_EPS(pos, variable_epsilon_value, n);
+            return {pos, lo, hi};
         }
     }
 
@@ -243,6 +278,32 @@ public:
      * @return the size of the index in bytes
      */
     size_t size_in_bytes() const { return segments.size() * sizeof(Segment) + levels_offsets.size() * sizeof(size_t); }
+
+    void output_levels(){
+        printf("    levels_offsets:\n");
+        for(int i=0;i<levels_offsets.size();i++){
+            printf("        %d: %lu\n",i,levels_offsets[i]);
+        }
+    }
+
+    void output_segments(){
+        printf("    segments:\n");
+        for(int i=0;i<segments.size();i++){
+            printf("        %d: %lu %f %d\n",i,segments[i].key, segments[i].slope, segments[i].intercept);
+        }
+    }
+
+    void get_level_offsets(std::vector<size_t>& lofs){
+        for(int i=0;i<levels_offsets.size();i++){
+            lofs.push_back(levels_offsets[i]);
+        }
+    }
+
+    void get_segments(std::vector<Segment>& segs){
+        for(int i=0;i<segments.size();i++){
+            segs.push_back(segments[i]);
+        }
+    }
 };
 
 #pragma pack(push, 1)
@@ -264,7 +325,13 @@ struct PGMIndex<K, Epsilon, EpsilonRecursive, Floating>::Segment {
             throw std::overflow_error("Change the type of Segment::intercept to uint64");
         if (cs_intercept < 0)
             throw std::overflow_error("Unexpected intercept < 0");
-        slope = cs_slope;
+        if (std::is_same<Floating, uint32_t>::value){
+            slope=(uint32_t)(uintfloat_mask*cs_slope);
+        }else{
+            slope = cs_slope;
+        }
+
+        // slope=cs_slope;
         intercept = cs_intercept;
     }
 
@@ -281,11 +348,24 @@ struct PGMIndex<K, Epsilon, EpsilonRecursive, Floating>::Segment {
      */
     inline size_t operator()(const K &k) const {
         size_t pos;
-        if constexpr (std::is_same_v<K, int64_t> || std::is_same_v<K, int32_t>)
-            pos = size_t(slope * double(std::make_unsigned_t<K>(k) - key));
-        else
-            pos = size_t(slope * double(k - key));
-        return pos + intercept;
+        double key_diff;
+        if constexpr (std::is_same_v<K, int64_t> || std::is_same_v<K, int32_t>){
+            key_diff=double(std::make_unsigned_t<K>(k) - key);
+        }else{
+            key_diff = double(k - key);
+        }
+        if(std::is_same<Floating, uint32_t>::value){
+            pos=int64_t(slope*key_diff)/uintfloat_mask+intercept;
+        }else{
+            pos = int64_t(slope * key_diff) + intercept;
+        }
+        return pos;
+
+        // if constexpr (std::is_same_v<K, int64_t> || std::is_same_v<K, int32_t>)
+        //     pos = size_t(slope * double(std::make_unsigned_t<K>(k) - key));
+        // else
+        //     pos = size_t(slope * double(k - key));
+        // return pos + intercept;
     }
 };
 

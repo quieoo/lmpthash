@@ -11,6 +11,8 @@
 #include <condition_variable>
 #include <unordered_set>
 
+#include "include/clmpthash.h"
+
 const int page_size = 4096;
 typedef pthash::single_phf<pthash::murmurhash2_64, pthash::compact, false> pthash_type;
 
@@ -344,8 +346,9 @@ struct lmpthash_config{
 struct LMPTSegment{
     uint64_t first_key;
     uint32_t slope;
-    uint64_t next_addr=0;
     uint8_t seg_type;
+    uint64_t next_addr=0;
+    uint32_t size=0;
 };
 
 
@@ -437,11 +440,13 @@ struct LMPTHashBuilder{
         config.alpha = cfg.table_size_alpha;
         config.minimal_output = true;
         config.verbose_output = false;
+        config.seed=0x123456789;
         config.LinearMapping = true;
         config.max_bucket_size = cfg.max_bucket_size;
         config.pilot_search_threshold = cfg.pilot_search_threshold;
         config.dynamic_alpha = cfg.dynamic_alpha;
         config.alpha_limits = cfg.alpha_limits;
+        
         
         segmentResults.resize(seg_num);
         currentSegment.store(0);
@@ -485,6 +490,7 @@ struct LMPTHashBuilder{
         config.alpha = cfg.table_size_alpha;
         config.minimal_output = true;  // mphf
         config.verbose_output = false;
+        config.seed=0x123456789;
 
         config.LinearMapping=true;
         config.max_bucket_size = cfg.max_bucket_size;
@@ -519,7 +525,12 @@ struct LMPTHashBuilder{
                     config.LinearMapping=false;
                     ret=f.build_in_internal_memory(keys.begin(), keys.size(), config);
                 }
-                lmpt_segments[i].slope=f.get_slope();
+                uint64_t _slope=f.get_slope();
+                if(_slope >= UINT32_MAX){
+                    printf("Error Bucketing: slope is larger than UINT32_MAX\n");
+                    return -1;
+                }
+                lmpt_segments[i].slope=_slope;
                 pthash_map[i]=f;
                 // printf("slope: %ld\n", lmpt_segments[i].slope);
             }
@@ -560,6 +571,7 @@ struct LMPTHashBuilder{
                     // }
                 }
                 lmpt_segments[seg_id].next_addr=(uint64_t)sub_table;
+                lmpt_segments[seg_id].size=r-l;
                 lmpt_segments[seg_id].seg_type=0;
             }else{
                 // approximate segment
@@ -582,9 +594,10 @@ struct LMPTHashBuilder{
                     sub_table[pos]=values[i];
                 }
                 lmpt_segments[seg_id].next_addr=(uint64_t)sub_table;
+                lmpt_segments[seg_id].size=table_size;
                 lmpt_segments[seg_id].seg_type=2-(pthash_map[seg_id].is_linear_mapping());
             }
-
+            // printf("seg-%d, first_key-%lu, seg_type-%u\n", seg_id, lmpt_segments[seg_id].first_key, lmpt_segments[seg_id].seg_type);
             ++seg_id;
             l=r;
         }
@@ -638,7 +651,7 @@ struct LMPTHashBuilder{
         int l=cfg.left_epsilon, r=cfg.right_epsilon;
         while(l<=r){
             int mid=(l+r)/2;
-            pgm::PGMIndex<Key, 128> pgm(segment_offsets, mid, mid);
+            pgm::PGMIndex<Key, 64,4,uint32_t> pgm(segment_offsets, mid, mid);
             int height=pgm.height();
             slogger.func_log(0, "    mid: %d, height: %d\n", mid, height);
             if(height<min_height){
@@ -671,6 +684,8 @@ struct LMPTHashBuilder{
             printf("        WARNING: can't find a valid epsilon\n");
             return -1;
         }
+        // pgm_index.output_levels();
+        // pgm_index.output_segments();
         epsilon=ep;
         return 0;
     }
@@ -746,6 +761,163 @@ struct LMPTHashBuilder{
             // break;
         }
         printf("    all keys are correct\n");
+        return 0;
+    }
+
+    int Compacting(void* ptr){
+        printf("## Compacting ##\n");
+        uint32_t inner_index_size=32+pgm_index.segments.size()*sizeof(pgm_segment)+(lmpt_segments.size()+1)/2*2*sizeof(uint64_t)+lmpt_segments.size()*16;
+        printf("    # Inner Index Size: %f MB\n", inner_index_size/1024.0/1024.0);
+        if(inner_index_size > 1024*1024){
+            printf("Error while Compacting: inner_index_size > 1MB\n");
+            return -1;
+        }
+
+        // first_key and last_key takes the first 16 bytes
+        uint64_t* p64=(uint64_t*)ptr;
+        p64[0]=lmpt_segments[0].first_key;
+        ptr+=16;
+
+        // num level of pgm_index take the next 2 bytes
+        uint16_t* p16=(uint16_t*)ptr;
+        p16[0]=pgm_index.height();
+        if(p16[0]>3){
+            printf("Error while Compacting: pgm height > 3\n");
+            return -1;
+        }
+        ptr+=2;
+
+        // variable_epsilon_value takes the next 2 bytes
+        p16=(uint16_t*)ptr;
+        p16[0]=pgm_index.variable_epsilon_value;
+        ptr+=2;
+        // array of level_offsets takes the next 12 bytes, each one takes 2 bytes
+        p16=(uint16_t*)ptr;
+        std::vector<size_t> lofs;
+        pgm_index.get_level_offsets(lofs);
+        
+        int num_level_offsets=lofs.size();
+        for(int i=0;i<num_level_offsets;i++){
+            p16[i]=lofs[i];
+        }
+        p16[num_level_offsets]=p16[num_level_offsets-1]+(lmpt_segments.size()+1)/2;
+        p16[num_level_offsets+1]=p16[num_level_offsets]+lmpt_segments.size();
+
+        printf("    level_offsets: ");
+        for(int i=0; i<=num_level_offsets+1;i++){
+            printf("%d ", p16[i]);
+        }
+        printf("\n");
+        ptr+=12;
+
+        // each inner model takes 16 bytes
+        std::vector<pgm_segment> segs;
+        for(int i=0;i<pgm_index.segments.size();i++){
+            pgm_segment ps;
+            ps.key=pgm_index.segments[i].key;
+            ps.slope=(uint32_t)(pgm_index.segments[i].slope);
+            ps.intercept=pgm_index.segments[i].intercept;
+            segs.push_back(ps);
+        }
+        memcpy(ptr, segs.data(), segs.size()*sizeof(pgm_segment));
+        ptr+=segs.size()*sizeof(pgm_segment);
+
+        // each first_key of htl_segment takes 8 bytes
+        p64=(uint64_t*)ptr;
+        for(int i=0; i<lmpt_segments.size();i++){
+            p64[i]=lmpt_segments[i].first_key;
+        }
+        // round up to 16 bytes
+        ptr+=(lmpt_segments.size()+1)/2*2*sizeof(uint64_t);
+
+        // each htl_segment takes 16 bytes
+        p64=(uint64_t*)ptr;
+        for(int i=0; i<lmpt_segments.size();i++){
+            if(lmpt_segments[i].seg_type==0){
+                // accurate segment
+                // allocate table data
+                uint64_t table_size=(lmpt_segments[i].size)*sizeof(Value)+sizeof(uint64_t);
+                uint8_t* raw_table=new uint8_t[table_size];
+                p64[i*2]=(uint64_t)raw_table;
+                memcpy(raw_table, &table_size, sizeof(uint64_t));
+                memcpy(raw_table+sizeof(uint64_t), (void*)(lmpt_segments[i].next_addr), table_size-sizeof(uint64_t));                
+            }else{
+                // approximate segment
+                // allocate table data
+                if(pthash_map.count(i)<=0){
+                    printf("Error while Compacting: pthash_map.count(i)<=0\n");
+                    return -1;
+                }
+                uint64_t table_size=(pthash_map[i].table_size())*sizeof(Value);
+                uint64_t pilot_size=pthash_map[i].pilot_bytes();
+
+                uint64_t total_size=table_size+pilot_size+sizeof(uint64_t);
+                uint8_t* raw_table;
+                try{
+                    raw_table = new uint8_t[total_size];
+                }catch(const std::bad_alloc& e){
+                    std::cout<<"Error while Compacting: bad_alloc"<<e.what()<<std::endl;
+                    return -1;
+                }
+                p64[i*2]=(uint64_t)raw_table;
+                // copy table data
+                memcpy(raw_table, &total_size, sizeof(uint64_t));
+                memcpy(raw_table+sizeof(uint64_t), (void*)(lmpt_segments[i].next_addr), table_size);
+                pthash_map[i].get_pilots(raw_table+sizeof(uint64_t)+table_size);
+
+
+                uint64_t pthash_meta=0;
+                // fisrt 2 bits for seg_type
+                pthash_meta=lmpt_segments[i].seg_type;
+                pthash_meta<<=62;
+                // next 30 bits of meta is slope
+                if(lmpt_segments[i].slope > 1<<30){
+                    printf("Error while Compacting: lmpt_segments[i].slope > 1<<30\n");
+                    return -1;
+                }
+                pthash_meta|=(uint64_t)(lmpt_segments[i].slope)<<32;
+                // next 8 bits of meta is width of pilot
+                uint32_t pilot_width=pthash_map[i].get_pilot_width();
+                if(pilot_width > 255){
+                    printf("Error while Compacting: pilot_width > 255\n");
+                    return -1;
+                }
+                pthash_meta|=(uint64_t)(pilot_width<<24) & 0xffffffff;
+                // next 24 bits of meta table_size
+                uint32_t table_size_value=pthash_map[i].table_size();
+                if(table_size_value > 16777215){
+                    printf("Error while Compacting: table_size > 16777215\n");
+                    return -1;
+                }
+                pthash_meta|=(uint64_t)table_size_value & 0xffffffff;
+
+                // check if values in pthash_meta is right
+                {
+                    uint8_t _seg_type=pthash_meta>>62;
+                    uint32_t _slope=(pthash_meta>>32)&0x3fffffff;
+                    uint32_t _pilot_width=(pthash_meta&0xff000000)>>24;
+                    uint32_t _table_size=pthash_meta&0xffffff;
+                    if(_seg_type!=lmpt_segments[i].seg_type){
+                        printf("Error while Compacting: _seg_type!=lmpt_segments[i].seg_type\n");
+                        return -1;
+                    }
+                    if(_slope!=lmpt_segments[i].slope){
+                        printf("Error while Compacting: _slope!=lmpt_segments[i].slope\n");
+                        return -1;
+                    }
+                    if(_pilot_width!=pilot_width){
+                        printf("Error while Compacting: _pilot_width!=pilot_width\n");
+                        return -1;
+                    }
+                    if(_table_size!=table_size_value){
+                        printf("Error while Compacting: _table_size!=table_size_value\n");
+                        return -1;
+                    }
+                }
+
+                p64[i*2+1]=pthash_meta;
+            }
+        }
         return 0;
     }
 };

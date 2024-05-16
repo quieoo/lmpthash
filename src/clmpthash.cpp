@@ -9,9 +9,10 @@ void cparse_msr_cambridge(LVA** lvas, PhysicalAddr** pas, uint64_t* num_lva, LVA
     *num_lva=uniq_lpn.size();
     *num_querys=lpns.size();
 
-    *lvas=(LVA*)malloc(sizeof(LVA)*uniq_lpn.size());
-    *querys=(LVA*)malloc(sizeof(LVA)*lpns.size());
-
+    // *lvas=(LVA*)malloc(sizeof(LVA)*uniq_lpn.size());
+    *lvas=new LVA[uniq_lpn.size()];
+    // *querys=(LVA*)malloc(sizeof(LVA)*lpns.size());
+    *querys=new LVA[lpns.size()];
     for(uint64_t i=0;i<uniq_lpn.size();i++){
         (*lvas)[i]=uniq_lpn[i];
     }
@@ -27,7 +28,8 @@ void parse_configuration(char* config_path, clmpthash_config* cfg, LVA** lvas, P
     // get trace file
     cparse_msr_cambridge(lvas, pas, num_lva, querys, num_querys, config.trace_path);
     printf("    lva_num: %lu, query_num: %lu\n", *num_lva, *num_querys);
-    *pas=(PhysicalAddr*)malloc(sizeof(PhysicalAddr)*(*num_lva));
+    // *pas=(PhysicalAddr*)malloc(sizeof(PhysicalAddr)*(*num_lva));
+    *pas=new PhysicalAddr[*num_lva];
     for(uint64_t k=0;k<*num_lva;k++){
         for(int i=0; i<8; i++){
             (*pas)[k].data[i]=((*lvas)[k])>>((7-i)*8);
@@ -47,6 +49,13 @@ void parse_configuration(char* config_path, clmpthash_config* cfg, LVA** lvas, P
     cfg->alpha_limits=config.alpha_limits;
     cfg->left_epsilon=config.left_epsilon;
     cfg->right_epsilon=config.right_epsilon;
+}
+
+void clean_bufs(LVA* lvas, PhysicalAddr* pas, LVA* querys){
+    printf("    clean bufs\n");
+    delete[] lvas;
+    delete[] pas;
+    delete[] querys;
 }
 
 void* build_index(LVA* lvas, PhysicalAddr* pas, uint64_t num, clmpthash_config* cfg){
@@ -126,8 +135,45 @@ int get_pa(LVA lva, void* index, PhysicalAddr* pa){
 
 int clean_index(void* index){
     LMPTHashBuilder<LVA, PhysicalAddr>* builder=static_cast<LMPTHashBuilder<LVA, PhysicalAddr>*>(index);
-
     builder->Cleaning();
     // printf("finish cleanning buffer\n");
+    delete builder;
+    return 0;
+}
+
+
+void* offload_index(void* index){
+
+    uint8_t* inner_index=new uint8_t[1024*1024];
+    memset(inner_index, 0, 1024*1024);
+
+    LMPTHashBuilder<LVA, PhysicalAddr>* builder=static_cast<LMPTHashBuilder<LVA, PhysicalAddr>*>(index);
+    if(builder->Compacting(inner_index)){
+        printf("error: compacting failed\n");
+        return NULL;
+    }
+    uint64_t* ptr=(uint64_t*)inner_index;
+    return static_cast<void*>(inner_index);
+}
+
+
+int clean_offloaded_index(void* inner_index){
+    uint16_t num_level=*((uint16_t*)(inner_index+16));
+    uint16_t* level_offsets=(uint16_t*)(inner_index+20);
+    uint16_t segments_start=level_offsets[num_level+1];
+    uint16_t segments_ends=level_offsets[num_level+2];
+    // printf("    clean offloaded index, segment_offset: %d-%d\n", segments_start, segments_ends);
+
+    
+    htl_segment* segments=(htl_segment*)(inner_index+32);
+
+    for(int i=segments_start;i<segments_ends;i++){
+        uint8_t* ptr=(uint8_t*)(segments[i].addr);
+        if(ptr!=nullptr){
+            delete[] ptr;
+        }
+    }
+
+    delete[] inner_index;
     return 0;
 }

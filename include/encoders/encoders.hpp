@@ -37,6 +37,18 @@ struct compact {
         visitor.visit(m_values);
     }
 
+    size_t data_bytes() const{
+        return m_values.len()*sizeof(uint64_t);
+    }
+
+    void get_data(uint8_t* dst) const {
+        m_values.get_data(dst);
+    }
+
+    uint64_t get_width() const {
+        return m_values.width();
+    }
+
 private:
     compact_vector m_values;
 };

@@ -267,6 +267,10 @@ struct compact_vector {
         return sizeof(m_size) + sizeof(m_width) + sizeof(m_mask) + essentials::vec_bytes(m_bits);
     }
 
+    size_t len() const{
+        return m_bits.size();
+    }
+
     void swap(compact_vector& other) {
         std::swap(m_size, other.m_size);
         std::swap(m_width, other.m_width);
@@ -280,6 +284,10 @@ struct compact_vector {
         visitor.visit(m_width);
         visitor.visit(m_mask);
         visitor.visit(m_bits);
+    }
+
+    void get_data(uint8_t* dst) const {
+        memcpy(dst, m_bits.data(), m_bits.size()*sizeof(uint64_t));
     }
 
 private:
