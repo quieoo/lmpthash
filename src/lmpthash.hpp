@@ -766,7 +766,7 @@ struct LMPTHashBuilder{
 
     int Compacting(void* ptr){
         printf("## Compacting ##\n");
-        uint32_t inner_index_size=32+pgm_index.segments.size()*sizeof(pgm_segment)+(lmpt_segments.size()+1)/2*2*sizeof(uint64_t)+lmpt_segments.size()*16;
+        uint32_t inner_index_size=32+pgm_index.segments.size()*sizeof(clmpthash_pgm_segment)+(lmpt_segments.size()+1)/2*2*sizeof(uint64_t)+lmpt_segments.size()*16;
         printf("    # Inner Index Size: %f MB\n", inner_index_size/1024.0/1024.0);
         if(inner_index_size > 1024*1024){
             printf("Error while Compacting: inner_index_size > 1MB\n");
@@ -811,18 +811,18 @@ struct LMPTHashBuilder{
         ptr+=12;
 
         // each inner model takes 16 bytes
-        std::vector<pgm_segment> segs;
+        std::vector<clmpthash_pgm_segment> segs;
         for(int i=0;i<pgm_index.segments.size();i++){
-            pgm_segment ps;
+            clmpthash_pgm_segment ps;
             ps.key=pgm_index.segments[i].key;
             ps.slope=(uint32_t)(pgm_index.segments[i].slope);
             ps.intercept=pgm_index.segments[i].intercept;
             segs.push_back(ps);
         }
-        memcpy(ptr, segs.data(), segs.size()*sizeof(pgm_segment));
-        ptr+=segs.size()*sizeof(pgm_segment);
+        memcpy(ptr, segs.data(), segs.size()*sizeof(clmpthash_pgm_segment));
+        ptr+=segs.size()*sizeof(clmpthash_pgm_segment);
 
-        // each first_key of htl_segment takes 8 bytes
+        // each first_key of clmpthash_htl_segment takes 8 bytes
         p64=(uint64_t*)ptr;
         for(int i=0; i<lmpt_segments.size();i++){
             p64[i]=lmpt_segments[i].first_key;
@@ -830,7 +830,7 @@ struct LMPTHashBuilder{
         // round up to 16 bytes
         ptr+=(lmpt_segments.size()+1)/2*2*sizeof(uint64_t);
 
-        // each htl_segment takes 16 bytes
+        // each clmpthash_htl_segment takes 16 bytes
         p64=(uint64_t*)ptr;
         for(int i=0; i<lmpt_segments.size();i++){
             if(lmpt_segments[i].seg_type==0){

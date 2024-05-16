@@ -12,10 +12,10 @@ extern "C" {
 #include <stdbool.h>
 
 
-typedef uint64_t LVA;
-typedef struct PhysicalAddr{
+typedef uint64_t clmpthash_lva;
+typedef struct clmpthash_physical_addr{
     uint8_t data[20];
-} PhysicalAddr;
+} clmpthash_physical_addr;
 
 typedef struct clmpthash_config{
     /*segmentation parameters*/
@@ -48,31 +48,31 @@ typedef struct clmpthash_config{
     int right_epsilon;
 }clmpthash_config;
 
-typedef struct pgm_segment{
+typedef struct clmpthash_pgm_segment{
     uint64_t key;
     uint32_t slope;
     uint32_t intercept;
-}pgm_segment;
+}clmpthash_pgm_segment;
 static uint32_t uintfloat_mask = ((uint32_t)1 << 31);
 
-typedef struct htl_segment{
+typedef struct clmpthash_htl_segment{
     uint64_t addr;
     uint64_t meta;
-}htl_segment;
+}clmpthash_htl_segment;
 
 
 
-void parse_configuration(char* config_path, clmpthash_config* cfg, LVA** lvas, PhysicalAddr** pas, uint64_t* num_lva, LVA** querys, uint64_t* num_querys);
-void clean_bufs(LVA* lvas, PhysicalAddr* pas, LVA* querys);
+void clmpthash_parse_configuration(char* config_path, clmpthash_config* cfg, clmpthash_lva** lvas, clmpthash_physical_addr** pas, uint64_t* num_lva, clmpthash_lva** querys, uint64_t* num_querys);
+void clmpthash_clean_bufs(clmpthash_lva* lvas, clmpthash_physical_addr* pas, clmpthash_lva* querys);
 
 
-void* build_index(LVA* lvas, PhysicalAddr* pas, uint64_t num, clmpthash_config* cfg);
-int get_pa(LVA lva, void* index, PhysicalAddr* pa);
-int clean_index(void* index);
+void* clmpthash_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_t num, clmpthash_config* cfg);
+int clmpthash_get_pa(clmpthash_lva lva, void* index, clmpthash_physical_addr* pa);
+int clmpthash_clean_index(void* index);
 
 
-void* offload_index(void* index);
-int clean_offloaded_index(void* inner_index);
+void* clmpthash_offload_index(void* index);
+int clmpthash_clean_offloaded_index(void* inner_index);
 
 
 

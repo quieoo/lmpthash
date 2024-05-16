@@ -4,30 +4,30 @@
 
 int test_host_side_clmpthash(char* config){
     clmpthash_config cfg;
-    LVA* lvas;
-    PhysicalAddr* pas;
-    LVA* querys;
+    clmpthash_lva* lvas;
+    clmpthash_physical_addr* pas;
+    clmpthash_lva* querys;
     uint64_t num_lva, num_querys;
-    parse_configuration(config, &cfg, &lvas, &pas, &num_lva, &querys, &num_querys);
+    clmpthash_parse_configuration(config, &cfg, &lvas, &pas, &num_lva, &querys, &num_querys);
 
-    void* index = build_index(lvas, pas, num_lva, &cfg);
+    void* index = clmpthash_build_index(lvas, pas, num_lva, &cfg);
     if(index==NULL){
         printf("error building index\n");
         return -1;
     }
 
-    PhysicalAddr pa;
+    clmpthash_physical_addr pa;
     for(int i = 0; i < num_querys; ++i) {
         if(i%10000==0){
             printf("\r    %d / %d\n", i, num_querys);
             printf("\033[1A");
         }
 
-        int ret = get_pa(querys[i], index, &pa);
+        int ret = clmpthash_get_pa(querys[i], index, &pa);
         
         // check if the result is correct: first 8 bytes should be equal to the original lva
         if(ret==0){
-            LVA _lva=0;
+            clmpthash_lva _lva=0;
             for(int j=0;j<8;j++){
                 _lva=(_lva<<8)+pa.data[j];
             }
@@ -42,8 +42,8 @@ int test_host_side_clmpthash(char* config){
         // break;
     }
     printf("\ntest passed\n");
-    clean_index(index);
-    clean_bufs(lvas, pas, querys);
+    clmpthash_clean_index(index);
+    clmpthash_clean_bufs(lvas, pas, querys);
     return 0;
 }
 
@@ -116,19 +116,19 @@ uint64_t MurmurHash2_64(void const* key, size_t len, uint64_t seed) {
 
 int test_host_side_compacted(char* config){
     clmpthash_config cfg;
-    LVA* lvas;
-    PhysicalAddr* pas;
-    LVA* querys;
+    clmpthash_lva* lvas;
+    clmpthash_physical_addr* pas;
+    clmpthash_lva* querys;
     uint64_t num_lva, num_querys;
-    parse_configuration(config, &cfg, &lvas, &pas, &num_lva, &querys, &num_querys);
+    clmpthash_parse_configuration(config, &cfg, &lvas, &pas, &num_lva, &querys, &num_querys);
 
-    void* index = build_index(lvas, pas, num_lva, &cfg);
+    void* index = clmpthash_build_index(lvas, pas, num_lva, &cfg);
     if(index==NULL){
         printf("error building index\n");
         return -1;
     }
 
-    void* inner_index=offload_index(index);
+    void* inner_index=clmpthash_offload_index(index);
     if(inner_index==NULL){
         printf("error offloading index\n");
         return -1;
@@ -137,7 +137,7 @@ int test_host_side_compacted(char* config){
     printf("query with compacted inner index, for DPU to use\n");
     // 
     uint16_t* p16;
-    PhysicalAddr pa1;
+    clmpthash_physical_addr pa1;
 
     for(int i = 16734; i < num_querys; ++i) {
         if(i%10000==0){
@@ -145,7 +145,7 @@ int test_host_side_compacted(char* config){
             printf("\033[1A");
         }
 
-        LVA lva = querys[i];
+        clmpthash_lva lva = querys[i];
         // query pgm index
         p16=(uint16_t*)(inner_index+16);
         uint32_t num_levels=p16[0];
@@ -157,7 +157,7 @@ int test_host_side_compacted(char* config){
         //     printf("%d ", p16[j+2]);
         // }
         uint16_t l=num_levels;
-        pgm_segment* segs=(pgm_segment*)(inner_index+32);
+        clmpthash_pgm_segment* segs=(clmpthash_pgm_segment*)(inner_index+32);
         uint32_t sidx=level_offsets[num_levels-1];
         while(l>0){
             int64_t pos=(int64_t)(segs[sidx].slope)*(lva-segs[sidx].key) / ((uint32_t)1<<31) + segs[sidx].intercept;
@@ -176,19 +176,19 @@ int test_host_side_compacted(char* config){
             --l;
         }
         // search for bottmom level
-        uint64_t* htl_first_key=(uint64_t*)(inner_index+32+level_offsets[num_levels]*sizeof(pgm_segment));
+        uint64_t* htl_first_key=(uint64_t*)(inner_index+32+level_offsets[num_levels]*sizeof(clmpthash_pgm_segment));
         while((sidx+1)<num_htl_segment && htl_first_key[sidx+1]<=lva){
             ++sidx;
         }
         // printf("lva: %lu, sidx: %d\n", lva, sidx);
         
-        htl_segment* htl_segs=(htl_segment*)(inner_index+32+level_offsets[num_levels+1]*sizeof(pgm_segment));
-        htl_segment htl_seg=htl_segs[sidx];
+        clmpthash_htl_segment* htl_segs=(clmpthash_htl_segment*)(inner_index+32+level_offsets[num_levels+1]*sizeof(clmpthash_pgm_segment));
+        clmpthash_htl_segment htl_seg=htl_segs[sidx];
         uint8_t seg_type=htl_seg.meta >> 62;
         // printf("seg_type: %u\n", seg_type);
         if(seg_type==0){
             // printf(" accurate segment\n");
-            PhysicalAddr* pas=(PhysicalAddr*)(htl_seg.addr+8);
+            clmpthash_physical_addr* pas=(clmpthash_physical_addr*)(htl_seg.addr+8);
             uint64_t pos=lva-htl_first_key[sidx];
             pa1=pas[pos];
         }else if(seg_type==4){
@@ -196,11 +196,11 @@ int test_host_side_compacted(char* config){
             return -1;
         }else{
             // printf(" approximate segment\n");
-            uint64_t hash=MurmurHash2_64(&lva, sizeof(LVA), 0x123456789);
+            uint64_t hash=MurmurHash2_64(&lva, sizeof(clmpthash_lva), 0x123456789);
             uint64_t blk;
             uint32_t table_size=htl_seg.meta & 0xffffff;
             uint64_t table_addr=htl_seg.addr+8;
-            uint64_t bucket_addr=table_addr+table_size*sizeof(PhysicalAddr);
+            uint64_t bucket_addr=table_addr+table_size*sizeof(clmpthash_physical_addr);
             uint32_t slope=(htl_seg.meta >>32) & 0x3fffffff;
             uint64_t width=(htl_seg.meta & 0xff000000)>>24;
             if(seg_type==1){
@@ -225,11 +225,11 @@ int test_host_side_compacted(char* config){
             
             p=(p^hash)%table_size;
             // printf("pos: %lu\n", p);
-            PhysicalAddr* pas=(PhysicalAddr*)table_addr;
+            clmpthash_physical_addr* pas=(clmpthash_physical_addr*)table_addr;
             pa1=pas[p];
         }
         
-        LVA _lva=0;
+        clmpthash_lva _lva=0;
         for(int j=0;j<8;j++){
             _lva=(_lva<<8)+pa1.data[j];
         }
@@ -241,16 +241,16 @@ int test_host_side_compacted(char* config){
         
     }
     printf("all query passed\n");
-    clean_index(index);
-    clean_bufs(lvas, pas, querys);
-    clean_offloaded_index(inner_index);
+    clmpthash_clean_index(index);
+    clmpthash_clean_bufs(lvas, pas, querys);
+    clmpthash_clean_offloaded_index(inner_index);
 
 }
 
 
 int main(int argc, char** argv) {
-    test_host_side_clmpthash(argv[1]);
-    // test_host_side_compacted(argv[1]);
+    // test_host_side_clmpthash(argv[1]);
+    test_host_side_compacted(argv[1]);
     return 0;
 
 }
