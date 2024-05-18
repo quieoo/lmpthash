@@ -17,9 +17,9 @@ int test_host_side_clmpthash(char* config){
     }
 
     clmpthash_physical_addr pa;
-    for(int i = 0; i < num_querys; ++i) {
+    for(uint64_t i = 0; i < num_querys; ++i) {
         if(i%10000==0){
-            printf("\r    %d / %d\n", i, num_querys);
+            printf("\r    %lu / %lu\n", i, num_querys);
             printf("\033[1A");
         }
 
@@ -113,6 +113,52 @@ uint64_t MurmurHash2_64(void const* key, size_t len, uint64_t seed) {
     return h;
 }
 
+typedef struct bucket_cache_entry{
+    uint64_t key;
+    uint64_t value;
+}bucket_cache_entry;
+
+typedef struct bucket_cache{
+    uint32_t table_size;
+    bucket_cache_entry* data;
+
+    uint64_t total_access;
+    uint64_t hit_count;
+}bucket_cache;
+
+bucket_cache* bucket_cache_init(uint32_t table_size){
+    bucket_cache* bc=(bucket_cache*)malloc(sizeof(bucket_cache));
+    memset(bc, 0, sizeof(bucket_cache));
+    bc->table_size=table_size;
+    bc->data=malloc(table_size*sizeof(bucket_cache_entry));
+    memset(bc->data, 0xFF, table_size*sizeof(bucket_cache_entry));  // cache initialized to 0xFF, in case of key=0
+    return bc;
+}
+
+uint64_t bucket_cache_get(bucket_cache* bc, uint32_t seg_id, uint32_t compressed_blk){
+    uint64_t key=((uint64_t)seg_id<<32)+(uint64_t)compressed_blk;
+    uint32_t idx=MurmurHash2_64(&key, sizeof(key), 0)%(bc->table_size);
+    bc->total_access=bc->total_access+1;
+    if(bc->data[idx].key==key){
+        bc->hit_count=bc->hit_count+1;
+        return bc->data[idx].value;
+    }else{
+        return UINT64_MAX;
+    }
+}
+
+void bucket_cache_put(bucket_cache* bc, uint32_t seg_id, uint32_t compressed_blk, uint64_t value){
+    uint64_t key=((uint64_t)seg_id<<32)+(uint64_t)compressed_blk;
+    uint32_t idx=MurmurHash2_64(&key, sizeof(key), 0)%(bc->table_size);
+    bc->data[idx].key=key;
+    bc->data[idx].value=value;
+}
+
+void bucket_cache_clean(bucket_cache* bc){
+    free(bc->data);
+    free(bc);
+}
+
 
 int test_host_side_compacted(char* config){
     clmpthash_config cfg;
@@ -138,10 +184,11 @@ int test_host_side_compacted(char* config){
     // 
     uint16_t* p16;
     clmpthash_physical_addr pa1;
+    bucket_cache* bc=bucket_cache_init(1024*1024/16);
 
-    for(int i = 16734; i < num_querys; ++i) {
+    for(uint64_t i = 0; i < num_querys; ++i) {
         if(i%10000==0){
-            printf("\r    %d / %d\n", i, num_querys);
+            printf("\r    %lu / %lu\n", i, num_querys);
             printf("\033[1A");
         }
 
@@ -215,9 +262,23 @@ int test_host_side_compacted(char* config){
             // printf("blk: %lu\n", blk);
             blk=blk*width;
             width=-(width==64) | ((((uint64_t)1)<<width)-1);
+            /*
             bucket_addr+=blk>>3;
-            
             uint64_t p=*(uint64_t*)bucket_addr;
+            */
+            uint64_t p;
+            uint32_t compressed_blk_id=blk>>3;
+            uint64_t blk_value=bucket_cache_get(bc, sidx, compressed_blk_id);
+            blk_value=UINT64_MAX;
+            if(blk_value!=UINT64_MAX){
+                // cache hit
+                p=blk_value;
+            }else{
+                bucket_addr+=blk>>3;
+                p=*(uint64_t*)bucket_addr;
+                // cache miss
+                bucket_cache_put(bc, sidx, compressed_blk_id, p);
+            }
             p=p>>(blk&7)&width;
             // printf("p: %lu\n", p);
             p=MurmurHash2_64(&p, sizeof(uint64_t), 0x123456789);
@@ -234,13 +295,15 @@ int test_host_side_compacted(char* config){
             _lva=(_lva<<8)+pa1.data[j];
         }
         if(_lva!=lva){
-            printf("%d: wrong result, should be 0x%lx, but got 0x%lx\n", i, lva, _lva);
+            printf("%lu: wrong result, should be 0x%lx, but got 0x%lx\n", i, lva, _lva);
             return -1;
         }
         // break;
         
     }
     printf("all query passed\n");
+    printf("cache hit ratio: %lf, total access: %lu\n", (double)(bc->hit_count)/(bc->total_access), bc->total_access);
+    bucket_cache_clean(bc);
     clmpthash_clean_index(index);
     clmpthash_clean_bufs(lvas, pas, querys);
     clmpthash_clean_offloaded_index(inner_index);

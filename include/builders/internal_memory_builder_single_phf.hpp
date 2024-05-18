@@ -34,7 +34,16 @@ struct internal_memory_builder_single_phf {
             throw seed_runtime_error();
         }
         m_seed = config.seed;
-        return build_from_hashes(hash_generator<RandomAccessIterator>(keys, m_seed), num_keys, config);
+        build_configuration new_config = config;
+        while(1){
+            auto time=build_from_hashes(hash_generator<RandomAccessIterator>(keys, m_seed), num_keys, new_config);
+            if(time.searching_seconds==-1){
+                new_config.alpha*=new_config.alpha;
+                continue;
+            }
+            return time;
+        }
+        // return build_from_hashes(hash_generator<RandomAccessIterator>(keys, m_seed), num_keys, config);
     }
 
     template <typename RandomAccessIterator>
@@ -220,8 +229,11 @@ struct internal_memory_builder_single_phf {
             bit_vector_builder taken(m_table_size);
             uint64_t num_non_empty_buckets = buckets.num_buckets();
             pilots_wrapper_t pilots_wrapper(m_pilots);
-            search(m_num_keys, m_num_buckets, num_non_empty_buckets, m_seed, config,
-                   buckets_iterator, taken, pilots_wrapper);
+            int ret=search(m_num_keys, m_num_buckets, num_non_empty_buckets, m_seed, config, buckets_iterator, taken, pilots_wrapper);
+            if (ret != 0) {
+                time.searching_seconds=-1;
+                return time;
+            }
             if (config.minimal_output) {
                 m_free_slots.clear();
                 m_free_slots.reserve(taken.size() - num_keys);

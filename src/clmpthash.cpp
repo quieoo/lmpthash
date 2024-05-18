@@ -80,7 +80,11 @@ void* clmpthash_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, u
     builder->Segmenting(keys);
     builder->Learning();
     builder->Multi_Bucketing();
-    builder->Tabling(keys, values);
+    if(builder->Tabling(keys, values)){
+        printf("Build index table failed\n");
+        return NULL;
+    }
+
     printf("Build index done\n");
 
     return static_cast<void*>(builder);

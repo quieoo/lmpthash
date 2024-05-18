@@ -135,6 +135,7 @@ int search_sequential(uint64_t num_keys, uint64_t num_buckets, uint64_t num_non_
                 terminate condition
             */
            if(config.pilot_search_threshold > 0 && pilot > config.pilot_search_threshold) {
+                // printf("pilot search threshold reached, pilot %lu\n", pilot);
                return -1;
            }
 

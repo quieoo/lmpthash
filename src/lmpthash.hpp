@@ -320,7 +320,23 @@ struct lmpthash_config{
             else if(name=="right_epsilon") right_epsilon=std::stoi(value);
             else if(name=="trace_path") trace_path=value;
         }
+
+        std::cout<<"================="<<config_file<<"=================="<<std::endl;
+        std::cout<<"alpha: "<<alpha<<std::endl;
+        std::cout<<"beta: "<<beta<<std::endl;
+        std::cout<<"gamma: "<<gamma<<std::endl;
+        std::cout<<"P: "<<P<<std::endl;
+        std::cout<<"hashed_num_bucket_c: "<<hashed_num_bucket_c<<std::endl;
+        std::cout<<"table_size_alpha: "<<table_size_alpha<<std::endl;
+        std::cout<<"max_bucket_size: "<<max_bucket_size<<std::endl;
+        std::cout<<"pilot_search_threshold: "<<pilot_search_threshold<<std::endl;
+        std::cout<<"dynamic_alpha: "<<dynamic_alpha<<std::endl;
+        std::cout<<"alpha_limits: "<<alpha_limits<<std::endl;
+        std::cout<<"left_epsilon: "<<left_epsilon<<std::endl;
+        std::cout<<"right_epsilon: "<<right_epsilon<<std::endl;
+        std::cout<<"trace_path: "<<trace_path<<std::endl;
     }
+
 
     // segmentation parameters
     float alpha;
@@ -418,8 +434,12 @@ struct LMPTHashBuilder{
             pthash_type f;
             auto ret = f.build_in_internal_memory(keys.begin(), keys.size(), config);
             if(ret.searching_seconds == -1) {
+                // printf("seg_%d build_in_internal_memory hash\n", index);
                 config.LinearMapping = false;
                 ret = f.build_in_internal_memory(keys.begin(), keys.size(), config);
+                if(ret.searching_seconds == -1) {
+                    printf("build_in_internal_memory hashed failed\n");
+                }
             }
             
             result.slope = f.get_slope();
