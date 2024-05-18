@@ -789,7 +789,7 @@ struct LMPTHashBuilder{
         uint32_t inner_index_size=32+pgm_index.segments.size()*sizeof(clmpthash_pgm_segment)+(lmpt_segments.size()+1)/2*2*sizeof(uint64_t)+lmpt_segments.size()*16;
         printf("    # Inner Index Size: %f MB\n", inner_index_size/1024.0/1024.0);
         if(inner_index_size > 1024*1024){
-            printf("Error while Compacting: inner_index_size > 1MB\n");
+            printf("Error while Compacting: inner_index_size > 1MB. %f MB\n", inner_index_size/1024.0/1024.0);
             return -1;
         }
 
@@ -872,6 +872,7 @@ struct LMPTHashBuilder{
                 uint64_t pilot_size=pthash_map[i].pilot_bytes();
 
                 uint64_t total_size=table_size+pilot_size+sizeof(uint64_t);
+                // printf("seg-%ld, table_size: %ld, pilot_size: %ld, total_size: %ld\n", i, table_size, pilot_size, total_size);
                 uint8_t* raw_table;
                 try{
                     raw_table = new uint8_t[total_size];

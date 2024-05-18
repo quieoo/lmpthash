@@ -2,6 +2,8 @@
 
 #define PGM_SUB_EPS(x, epsilon) ((x) <= (epsilon) ? 0 : ((x) - (epsilon)))
 
+int nof_dpu_offload_index(void* index);
+
 int test_host_side_clmpthash(char* config){
     clmpthash_config cfg;
     clmpthash_lva* lvas;
@@ -180,6 +182,9 @@ int test_host_side_compacted(char* config){
         return -1;
     }
 
+    nof_dpu_offload_index(inner_index);
+    return;
+
     printf("query with compacted inner index, for DPU to use\n");
     // 
     uint16_t* p16;
@@ -307,6 +312,41 @@ int test_host_side_compacted(char* config){
     clmpthash_clean_index(index);
     clmpthash_clean_bufs(lvas, pas, querys);
     clmpthash_clean_offloaded_index(inner_index);
+
+}
+
+
+int nof_dpu_offload_index(void* index){
+    uint32_t num_levels=*((uint16_t*)(index+16));
+    uint16_t* level_offsets=(uint16_t*)(index+20);
+
+    // visit and offload table data
+    clmpthash_htl_segment* htl_segs=(clmpthash_htl_segment*)(index+32+level_offsets[num_levels+1]*sizeof(clmpthash_pgm_segment));
+    uint32_t num_htl_segment=level_offsets[num_levels+2]-level_offsets[num_levels+1];
+    for(uint32_t i=0;i<num_htl_segment;i++){
+        uint64_t* table=(uint64_t*)(htl_segs[i].addr);
+        uint8_t seg_type=(htl_segs[i].meta)>>62;
+        uint64_t table_size=table[0];
+        // NOTE: current kernel driver noly support allocate 4MB dma buffer
+        // TODO: alloc huge dma buffer by IOMMU（Input-Output Memory Management Unit） or CMA（Contiguous Memory Allocator), which may need to modify the kernel configuration
+        
+        // PS: Only Accurate Segment will generage such a huge dma buffer, 
+        if(seg_type==0){
+            // accurate segment
+            uint32_t offload_size = (table_size-8) > 4*1024*1024 ? 4*1024*1024 : (table_size-8);
+            // offload_to_kernel(table+8, offload_size);
+        }else{
+            uint32_t offload_size=(table_size-8);
+            if(offload_size>4*1024*1024){
+                printf("error: offload size too large for a approximate segment\n");
+                return -1;
+            }
+            // offload_to_kernel(table+8, offload_size);
+        }
+    }
+
+    // offload Lindex to DPU
+    offload_to_DPU(index, level_offsets[num_levels+2]*16);
 
 }
 
