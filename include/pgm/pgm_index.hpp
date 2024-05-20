@@ -211,6 +211,7 @@ public:
     explicit PGMIndex(const std::vector<K> &data) : PGMIndex(data.begin(), data.end()) {}
 
     PGMIndex(const std::vector<K> &data, size_t epsilon, size_t epsilon_recursive) : n(data.size()), first_key(n ? data[0] : K(0)), segments(), levels_offsets() {
+        // printf("build with epsilon: %d, epsilon_recursive: %d\n", epsilon, epsilon_recursive);
         build(data.begin(), data.end(), epsilon,epsilon_recursive, segments, levels_offsets);
         variable_epsilon_value = epsilon;
         variable_er = epsilon_recursive;
@@ -289,7 +290,7 @@ public:
     void output_segments(){
         printf("    segments:\n");
         for(int i=0;i<segments.size();i++){
-            printf("        %d: %lu %f %d\n",i,segments[i].key, segments[i].slope, segments[i].intercept);
+            printf("        %d: %lu %u %u\n",i,segments[i].key, segments[i].slope, segments[i].intercept);
         }
     }
 
@@ -327,8 +328,10 @@ struct PGMIndex<K, Epsilon, EpsilonRecursive, Floating>::Segment {
             throw std::overflow_error("Unexpected intercept < 0");
         if (std::is_same<Floating, uint32_t>::value){
             slope=(uint32_t)(uintfloat_mask*cs_slope);
+            // printf("cs_slope: %.9Lf -> %u\n", cs_slope, slope);
         }else{
             slope = cs_slope;
+            // printf("cs_slope: %.9Lf -> %Lf\n", cs_slope, slope);
         }
 
         // slope=cs_slope;

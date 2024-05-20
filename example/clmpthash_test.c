@@ -167,7 +167,8 @@ int test_host_side_compacted(char* config){
     clmpthash_lva* lvas;
     clmpthash_physical_addr* pas;
     clmpthash_lva* querys;
-    uint64_t num_lva, num_querys;
+    uint64_t num_lva;
+    uint64_t num_querys;
     clmpthash_parse_configuration(config, &cfg, &lvas, &pas, &num_lva, &querys, &num_querys);
 
     void* index = clmpthash_build_index(lvas, pas, num_lva, &cfg);
@@ -182,8 +183,8 @@ int test_host_side_compacted(char* config){
         return -1;
     }
 
-    nof_dpu_offload_index(inner_index);
-    return;
+    // nof_dpu_offload_index(inner_index);
+    // return;
 
     printf("query with compacted inner index, for DPU to use\n");
     // 
@@ -191,6 +192,9 @@ int test_host_side_compacted(char* config){
     clmpthash_physical_addr pa1;
     bucket_cache* bc=bucket_cache_init(1024*1024/16);
 
+    uint64_t total_ls_cnt=0;
+
+    // num_querys=1;
     for(uint64_t i = 0; i < num_querys; ++i) {
         if(i%10000==0){
             printf("\r    %lu / %lu\n", i, num_querys);
@@ -213,7 +217,7 @@ int test_host_side_compacted(char* config){
         uint32_t sidx=level_offsets[num_levels-1];
         while(l>0){
             int64_t pos=(int64_t)(segs[sidx].slope)*(lva-segs[sidx].key) / ((uint32_t)1<<31) + segs[sidx].intercept;
-
+            // printf("key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, segs[sidx].key, segs[sidx].slope, segs[sidx].intercept, pos);
             if(pos<0) pos=0;
             if(pos>segs[sidx+1].intercept)  pos=segs[sidx+1].intercept;
             if(l<=1){
@@ -221,7 +225,10 @@ int test_host_side_compacted(char* config){
                 break;
             }
             uint32_t s_idx2=level_offsets[l-2]+PGM_SUB_EPS(pos, epsilon+1);
-            while(segs[s_idx2].key > lva){
+            
+            while(segs[s_idx2+1].key <= lva){
+                // printf("    s_idx2.key: %lu, lva: %lu\n", segs[s_idx2+1].key, lva);
+                total_ls_cnt++;
                 ++s_idx2;
             }
             sidx=s_idx2;
@@ -231,6 +238,7 @@ int test_host_side_compacted(char* config){
         uint64_t* htl_first_key=(uint64_t*)(inner_index+32+level_offsets[num_levels]*sizeof(clmpthash_pgm_segment));
         while((sidx+1)<num_htl_segment && htl_first_key[sidx+1]<=lva){
             ++sidx;
+            total_ls_cnt++;
         }
         // printf("lva: %lu, sidx: %d\n", lva, sidx);
         
@@ -308,6 +316,7 @@ int test_host_side_compacted(char* config){
     }
     printf("all query passed\n");
     printf("cache hit ratio: %lf, total access: %lu\n", (double)(bc->hit_count)/(bc->total_access), bc->total_access);
+    printf("average local search steps for each query: %f\n",(double)(total_ls_cnt)/num_querys);
     bucket_cache_clean(bc);
     clmpthash_clean_index(index);
     clmpthash_clean_bufs(lvas, pas, querys);
@@ -316,39 +325,39 @@ int test_host_side_compacted(char* config){
 }
 
 
-int nof_dpu_offload_index(void* index){
-    uint32_t num_levels=*((uint16_t*)(index+16));
-    uint16_t* level_offsets=(uint16_t*)(index+20);
+// int nof_dpu_offload_index(void* index){
+//     uint32_t num_levels=*((uint16_t*)(index+16));
+//     uint16_t* level_offsets=(uint16_t*)(index+20);
 
-    // visit and offload table data
-    clmpthash_htl_segment* htl_segs=(clmpthash_htl_segment*)(index+32+level_offsets[num_levels+1]*sizeof(clmpthash_pgm_segment));
-    uint32_t num_htl_segment=level_offsets[num_levels+2]-level_offsets[num_levels+1];
-    for(uint32_t i=0;i<num_htl_segment;i++){
-        uint64_t* table=(uint64_t*)(htl_segs[i].addr);
-        uint8_t seg_type=(htl_segs[i].meta)>>62;
-        uint64_t table_size=table[0];
-        // NOTE: current kernel driver noly support allocate 4MB dma buffer
-        // TODO: alloc huge dma buffer by IOMMU（Input-Output Memory Management Unit） or CMA（Contiguous Memory Allocator), which may need to modify the kernel configuration
+//     // visit and offload table data
+//     clmpthash_htl_segment* htl_segs=(clmpthash_htl_segment*)(index+32+level_offsets[num_levels+1]*sizeof(clmpthash_pgm_segment));
+//     uint32_t num_htl_segment=level_offsets[num_levels+2]-level_offsets[num_levels+1];
+//     for(uint32_t i=0;i<num_htl_segment;i++){
+//         uint64_t* table=(uint64_t*)(htl_segs[i].addr);
+//         uint8_t seg_type=(htl_segs[i].meta)>>62;
+//         uint64_t table_size=table[0];
+//         // NOTE: current kernel driver noly support allocate 4MB dma buffer
+//         // TODO: alloc huge dma buffer by IOMMU（Input-Output Memory Management Unit） or CMA（Contiguous Memory Allocator), which may need to modify the kernel configuration
         
-        // PS: Only Accurate Segment will generage such a huge dma buffer, 
-        if(seg_type==0){
-            // accurate segment
-            uint32_t offload_size = (table_size-8) > 4*1024*1024 ? 4*1024*1024 : (table_size-8);
-            // offload_to_kernel(table+8, offload_size);
-        }else{
-            uint32_t offload_size=(table_size-8);
-            if(offload_size>4*1024*1024){
-                printf("error: offload size too large for a approximate segment\n");
-                return -1;
-            }
-            // offload_to_kernel(table+8, offload_size);
-        }
-    }
+//         // PS: Only Accurate Segment will generage such a huge dma buffer, 
+//         if(seg_type==0){
+//             // accurate segment
+//             uint32_t offload_size = (table_size-8) > 4*1024*1024 ? 4*1024*1024 : (table_size-8);
+//             // offload_to_kernel(table+8, offload_size);
+//         }else{
+//             uint32_t offload_size=(table_size-8);
+//             if(offload_size>4*1024*1024){
+//                 printf("error: offload size too large for a approximate segment\n");
+//                 return -1;
+//             }
+//             // offload_to_kernel(table+8, offload_size);
+//         }
+//     }
 
-    // offload Lindex to DPU
-    offload_to_DPU(index, level_offsets[num_levels+2]*16);
+//     // offload Lindex to DPU
+//     offload_to_DPU(index, level_offsets[num_levels+2]*16);
 
-}
+// }
 
 
 int main(int argc, char** argv) {

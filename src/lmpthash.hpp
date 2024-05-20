@@ -375,7 +375,7 @@ struct LMPTHashBuilder{
     lmpthash_config cfg;
     pthash::simple_logger slogger;
     std::unordered_map<uint32_t, pthash_type> pthash_map;
-    pgm::PGMIndex<Key> pgm_index;
+    pgm::PGMIndex<Key, 64,4,uint32_t> pgm_index;
     int epsilon;
 
     LMPTHashBuilder(lmpthash_config _cfg){
@@ -688,7 +688,7 @@ struct LMPTHashBuilder{
         int ep=-1;
         while(l<=r){
             int mid=(l+r)/2;
-            pgm::PGMIndex<Key, 64> pgm(segment_offsets, mid, mid);
+            pgm::PGMIndex<Key, 64, 4, uint32_t> pgm(segment_offsets, mid, mid);
             int height=pgm.height();
             slogger.func_log(0, "    mid: %d, height: %d\n", mid, height);
             if(height==min_height){
@@ -837,6 +837,7 @@ struct LMPTHashBuilder{
             ps.key=pgm_index.segments[i].key;
             ps.slope=(uint32_t)(pgm_index.segments[i].slope);
             ps.intercept=pgm_index.segments[i].intercept;
+            // printf("pgm segment %d: key: %ld, slope: %d, intercept: %d\n", i, ps.key, ps.slope, ps.intercept);
             segs.push_back(ps);
         }
         memcpy(ptr, segs.data(), segs.size()*sizeof(clmpthash_pgm_segment));
