@@ -818,9 +818,10 @@ struct LMPTHashBuilder{
         
         int num_level_offsets=lofs.size();
         for(int i=0;i<num_level_offsets;i++){
-            p16[i]=lofs[i];
+            p16[i]=lofs[i]+2;
         }
-        p16[num_level_offsets]=p16[num_level_offsets-1]+(lmpt_segments.size()+1)/2;
+        // p16[num_level_offsets]=p16[num_level_offsets-1]+(lmpt_segments.size()+1)/2;
+        p16[num_level_offsets]=p16[num_level_offsets-1]+(lmpt_segments.size()+2)/2; // add the boundary to first_key
         p16[num_level_offsets+1]=p16[num_level_offsets]+lmpt_segments.size();
 
         printf("    level_offsets: ");
@@ -848,8 +849,10 @@ struct LMPTHashBuilder{
         for(int i=0; i<lmpt_segments.size();i++){
             p64[i]=lmpt_segments[i].first_key;
         }
+        // add a max bound to the end of first_key
+        p64[lmpt_segments.size()]=UINT64_MAX;
         // round up to 16 bytes
-        ptr+=(lmpt_segments.size()+1)/2*2*sizeof(uint64_t);
+        ptr+=(lmpt_segments.size()+2)/2*2*sizeof(uint64_t);
 
         // each clmpthash_htl_segment takes 16 bytes
         p64=(uint64_t*)ptr;
