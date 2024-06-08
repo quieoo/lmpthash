@@ -206,15 +206,15 @@ spram global_spram[64];
 #define lmpthash_tmp_spram ((uint8_t*)(&(global_spram[30])))
 #define lmpthash_lindex_meta_spram ((uint8_t*)(&(global_spram[32])))
 
-#define lmpthash_lindex_segment_spram1 ((uint8_t*)(&(global_spram[34])))
-#define lmpthash_lindex_segment_spram2 ((uint8_t*)(&(global_spram[36])))
-#define lmpthash_lindex_segment_spram3 ((uint8_t*)(&(global_spram[38])))
-#define lmpthash_lindex_segment_spram4 ((uint8_t*)(&(global_spram[40])))
+// #define lmpthash_lindex_segment_spram1 ((uint8_t*)(&(global_spram[34])))
+// #define lmpthash_lindex_segment_spram2 ((uint8_t*)(&(global_spram[36])))
+// #define lmpthash_lindex_segment_spram3 ((uint8_t*)(&(global_spram[38])))
+// #define lmpthash_lindex_segment_spram4 ((uint8_t*)(&(global_spram[40])))
 
-#define lmpthash_htl_first_key_spram1 ((uint8_t*)(&(global_spram[42])))
-#define lmpthash_htl_first_key_spram2 ((uint8_t*)(&(global_spram[44])))
-#define lmpthash_htl_first_key_spram3 ((uint8_t*)(&(global_spram[46])))
-#define lmpthash_htl_first_key_spram4 ((uint8_t*)(&(global_spram[48])))
+// #define lmpthash_htl_first_key_spram1 ((uint8_t*)(&(global_spram[42])))
+// #define lmpthash_htl_first_key_spram2 ((uint8_t*)(&(global_spram[44])))
+// #define lmpthash_htl_first_key_spram3 ((uint8_t*)(&(global_spram[46])))
+// #define lmpthash_htl_first_key_spram4 ((uint8_t*)(&(global_spram[48])))
 
 #define lmpthash_cache_segment_spram ((uint8_t*)(&(global_spram[50])))
 
@@ -346,48 +346,54 @@ int test_host_side_compacted_v2(char* config) {
                     // printf("active_spram: %u\n", active_spram);
                     
                     // load 4 segments at a time
-                    i=0;
-                    for(;i<4;i++)
-                        memcpy(l1_segs(i), inner_index + (s_idx2+1+i)*16, 16);
+                    // i=0;
+                    // for(;i<4;i++)
+                    //     memcpy(l1_segs(i), inner_index + (s_idx2+1+i)*16, 16);
                     
+                    memcpy(l1_segs(0), inner_index+(++s_idx2)*16, 16);
+                    memcpy(l1_segs(1), inner_index+(++s_idx2)*16, 16);
+                    memcpy(l1_segs(2), inner_index+(++s_idx2)*16, 16);
+                    memcpy(l1_segs(3), inner_index+(++s_idx2)*16, 16);
                     total_ls_cnt++;
                     sm_cnt[0]++;
-                    i=0;
-                    for (; i < 4; i++) {
-                        if (l1_segs(i)[0].key > lva) { break; }
-                    }
-                    
-                    s_idx2 += i;
-                    if (i < 4) {
-                        if (i == 0) {
-                            // printf("s_idx1: %u, s_idx2: %u\n", s_idx1, s_idx2);
-                            
-                            // lva < l1_segs[l1_seg_id][0].key
-                            if (s_idx1 == s_idx2) {
-                                // start segment happen to be the right segment
-                                // load the segment to l1_segs[3][1]
-                                memcpy(l1_segs(3)+1, inner_index + (s_idx1) * 16, 16);
-                                
-                                total_ls_cnt++;
-                                sm_cnt[1]++;
-                            }
-                            // third segment on the other spram l1_segs[3] of last batched load
-                            pos = (int64_t)(l1_segs(3)[1].slope) * (lva - l1_segs(3)[1].key) / ((uint32_t)1 << 31) +  l1_segs(3)[1].intercept;
-                            // printf("[i==0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, l1_segs(3)[1].key, l1_segs(3)[1].slope, l1_segs(3)[1].intercept, pos);
-                            if (pos < 0) pos = 0;
-                            if (pos > l1_segs(0)[0].intercept)pos = l1_segs(0)[0].intercept;
-                        } else {
-                            // i=1 or 2 or 3
-                            // l1_segs[l1_seg_id][i-1].key <= lva < l1_segs[l1_seg_id][i].key
-                            // (i-1)-th segment on this spram is the right segment in level[l-1]
-                            pos = (int64_t)(l1_segs(i-1)[0].slope) *      (lva - l1_segs(i-1)[0].key) / ((uint32_t)1 << 31) +  l1_segs(i-1)[0].intercept;
-                            // printf("[i>0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, l1_segs(i-1)[0].key, l1_segs(i-1)[0].slope, l1_segs(i-1)[0].intercept, pos);
-                            if (pos < 0) pos = 0;
-                            if (pos > l1_segs(i)[0].intercept)pos = l1_segs(i)[0].intercept;
+
+                    // l1_segs_0_outstand()
+                    if(l1_segs(0)->key > lva){
+                        if(s_idx1+4==s_idx2){
+                            memcpy(l1_segs(3)+1, inner_index + (s_idx1) * 16, 16);    
+                            total_ls_cnt++;
+                            sm_cnt[1]++;
                         }
+                        pos = (int64_t)(l1_segs(3)[1].slope) * (lva - l1_segs(3)[1].key) / ((uint32_t)1 << 31) +  l1_segs(3)[1].intercept;
+                        // printf("[i==0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, l1_segs(3)[1].key, l1_segs(3)[1].slope, l1_segs(3)[1].intercept, pos);
+                        if (pos < 0) pos = 0;
+                        if (pos > l1_segs(0)[0].intercept)pos = l1_segs(0)[0].intercept;
                         break;
                     }
-                    // 
+                    //l1_segs_1_outstand()
+                    if(l1_segs(1)->key > lva){
+                        pos = (int64_t)(l1_segs(0)[0].slope) * (lva - l1_segs(0)[0].key) / ((uint32_t)1 << 31) +  l1_segs(0)[0].intercept;
+                        // printf("[i>0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, l1_segs(i-1)[0].key, l1_segs(i-1)[0].slope, l1_segs(i-1)[0].intercept, pos);
+                        if (pos < 0) pos = 0;
+                        if (pos > l1_segs(1)[0].intercept)pos = l1_segs(1)[0].intercept;
+                        break;
+                    }
+                    //l1_segs_2_outstand()
+                    if(l1_segs(2)->key > lva){
+                        pos = (int64_t)(l1_segs(1)[0].slope) * (lva - l1_segs(1)[0].key) / ((uint32_t)1 << 31) +  l1_segs(1)[0].intercept;
+                        // printf("[i>0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, l1_segs(i-1)[0].key, l1_segs(i-1)[0].slope, l1_segs(i-1)[0].intercept, pos);
+                        if (pos < 0) pos = 0;
+                        if (pos > l1_segs(2)[0].intercept)pos = l1_segs(2)[0].intercept;
+                        break;
+                    }
+                    //l1_segs_1_outstand()
+                    if(l1_segs(3)->key > lva){
+                        pos = (int64_t)(l1_segs(2)[0].slope) * (lva - l1_segs(2)[0].key) / ((uint32_t)1 << 31) +  l1_segs(2)[0].intercept;
+                        // printf("[i>0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, l1_segs(i-1)[0].key, l1_segs(i-1)[0].slope, l1_segs(i-1)[0].intercept, pos);
+                        if (pos < 0) pos = 0;
+                        if (pos > l1_segs(3)[0].intercept)pos = l1_segs(3)[0].intercept;
+                        break;
+                    }
                     // backup current l1_segs[3][0] to l1_segs[3][1]
                     l1_segs(3)[1]= l1_segs(3)[0];
                 }
@@ -414,24 +420,47 @@ int test_host_side_compacted_v2(char* config) {
                 memcpy(htl_fks(6), inner_index+(s_idx2++)*16, 16);
                 total_ls_cnt++;
                 sm_cnt[2]++;
-                // if(s_idx1!=-1 || htl_fks(0)[0]>lva){
-                //     break;
-                // }
-                // ++s_idx1;
-                // s_first_key = htl_fks(0)[0];
-
+                
                 i=0;
-                for(;i<8;++i){
-                    // printf("i: %u, htl_fks(i)[0]: %lu\n", i, htl_fks(i)[0]);
-                    if(htl_fks(i)[0]>lva){
-                        break;
-                    }
-                    ++s_idx1;
-                    s_first_key = htl_fks(i)[0];
-                }
-                if(i<8) break;
+                // htl_fks_0_outstand()
+                if(htl_fks(0)[0]>lva) break;
+                ++i;
+
+                if(htl_fks(1)[0]>lva) break;
+                ++i;
+
+                // htl_fks_1_outstand()
+                if(htl_fks(2)[0]>lva) break;
+                ++i;
+
+                if(htl_fks(3)[0]>lva) break;
+                ++i;
+
+                // htl_fks_2_outstand()
+                if(htl_fks(4)[0]>lva) break;
+                ++i;
+
+                if(htl_fks(5)[0]>lva) break;
+                ++i;
+
+                // htl_fks_3_outstand()
+                if(htl_fks(6)[0]>lva) break;
+                ++i;
+
+                if(htl_fks(7)[0]>lva) break;
+                ++i;
+
+                // can not find next_first_key > lva
+                htl_fks(7)[1]= htl_fks(7)[0];   // backup current first_key
+                s_idx1+=8;
             }while(1);
             // load htl segment
+            s_idx1+=i;
+            if(i==0){
+                s_first_key=htl_fks(7)[1];
+            }else{
+                s_first_key=htl_fks(i-1)[0];
+            }
             
             memcpy(htl_seg, inner_index + (level_offsets[lmd->num_levels + 1] + s_idx1) * 16, 16);
             total_ls_cnt++;
