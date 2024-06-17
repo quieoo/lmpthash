@@ -17,6 +17,11 @@ typedef struct clmpthash_physical_addr{
     uint8_t data[20];
 } clmpthash_physical_addr;
 
+typedef struct clmpthash_lva2pa{
+    clmpthash_physical_addr pa;
+    clmpthash_lva lva;
+}clmpthash_lva2pa;
+
 typedef struct clmpthash_config{
     /*segmentation parameters*/
     // 'alpha' determines the impact of the total number of valid keys within a segment on priority during segmentation
@@ -74,7 +79,7 @@ int clmpthash_clean_index(void* index);
 void* clmpthash_offload_index(void* index);
 int clmpthash_clean_offloaded_index(void* inner_index);
 
-
+void* clt_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_t num, clmpthash_config* cfg);
 
 #ifdef __cplusplus
 }

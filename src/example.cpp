@@ -4,6 +4,8 @@
 #include "src/util.hpp"  // for functions distinct_keys and check
 
 #include "pgm/pgm_index.hpp"
+#include "lmpthash.hpp"
+
 
 void test_pgm_float(){
     printf("test_pgm_float\n");

@@ -236,6 +236,7 @@ public:
         segments=e.segments;
         levels_offsets=e.levels_offsets;
         variable_epsilon_value=e.variable_epsilon_value;
+        variable_er=e.variable_er;
         return *this;
     }
 
