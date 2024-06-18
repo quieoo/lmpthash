@@ -324,6 +324,7 @@ void* clt_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_
 
     uint64_t buf_id=0;
     uint64_t* sub_table_addr=(uint64_t*)(inner_index+1024*1024);
+    sub_table_addr[buf_id++]=num_bufs;
     uint64_t offset=0;
     while(offset<num){
         uint64_t last=offset+pas_in_buf;

@@ -234,6 +234,17 @@ void load_16B_with_tmp_spram(void* dst, void* inner_index, uint32_t idx){
     *(d+1)=*(s+1);
 }
 
+uint64_t get_u64_from_sm(void* sm, uint32_t idx, uint8_t oft) {
+    // printf("idx=%d, oft=%d\n", idx, oft);
+    clmpthash_htl_segment* sm_16B=(clmpthash_htl_segment*)sm;
+    clmpthash_htl_segment tmp = sm_16B[idx];    // load to spram
+
+    uint64_t* p=(uint64_t*)(&tmp);
+
+    return p[oft];
+}
+
+
 int test_lt(char* config) {
     clmpthash_config cfg;
     clmpthash_lva* lvas;
@@ -280,6 +291,7 @@ int test_lt(char* config) {
         }
 
         clmpthash_lva lva = querys[q];
+        
 
         // cached last htl segment
         clmpthash_pgm_segment* pgm_seg = (clmpthash_pgm_segment*)lmpthash_cache_segment_spram;
@@ -445,17 +457,18 @@ int test_lt(char* config) {
         }
         // reach level-0, search for the right first_key
         
-
+        // printf("pos: %lu\n", pos);
         s_idx1 = (PGM_SUB_EPS(pos, epsilon));
         s_idx2=s_idx1+epsilon*2;
         // get sub_table addr
-        uint64_t* sub_table_addr=(uint64_t*)(inner_index+1024*1024);
+        uint64_t* sub_table_addr=(uint64_t*)(inner_index+1024*1024+8);
 
         // printf("bottom level, local search %u : %u \n", s_idx1, s_idx2);
         // if split to 2 bufs, 74897 lva2pas in each dma bufer
         if(s_idx1/74897 == s_idx2/74897){
             // dma with width=(epsilon*2)*28
-            memcpy(lva2pas_spram, sub_table_addr[s_idx1/74897]+(s_idx1%74897)*28, epsilon*2*28);
+            uint64_t sb_addr=get_u64_from_sm(sub_table_addr, s_idx1/74897/2, s_idx1/74897%2);
+            memcpy(lva2pas_spram, sb_addr+(s_idx1%74897)*28, epsilon*2*28);
             dma_num++;
             i=0;
             for(;i<epsilon*2;++i){
@@ -473,7 +486,9 @@ int test_lt(char* config) {
         }else{
             // dma 2 times untile find the right pa
             uint32_t num_lva2pa_first_batch=74897-(s_idx1%74897);
-            memcpy(lva2pas_spram, sub_table_addr[s_idx1/74897]+(s_idx1%74897)*28, num_lva2pa_first_batch*28);
+            uint64_t sb_addr=get_u64_from_sm(sub_table_addr, s_idx1/74897/2, s_idx1/74897%2);
+
+            memcpy(lva2pas_spram, sb_addr+(s_idx1%74897)*28, num_lva2pa_first_batch*28);
             dma_num++;
             i=0;
             for(;i<(num_lva2pa_first_batch);++i){
@@ -490,7 +505,8 @@ int test_lt(char* config) {
                 }
             }
             if(i==num_lva2pa_first_batch){
-                memcpy(lva2pas_spram, sub_table_addr[s_idx2/74897], (s_idx2%74897)*28);
+                sb_addr=get_u64_from_sm(sub_table_addr, s_idx2/74897/2, s_idx2/74897%2);
+                memcpy(lva2pas_spram, sb_addr, (s_idx2%74897)*28);
                 i=0;
                 dma_num++;
                 for(;i<(s_idx2%74897);++i){
