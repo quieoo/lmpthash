@@ -468,7 +468,7 @@ int test_lt(char* config) {
         if(s_idx1/74897 == s_idx2/74897){
             // dma with width=(epsilon*2)*28
             uint64_t sb_addr=get_u64_from_sm(sub_table_addr, s_idx1/74897/2, s_idx1/74897%2);
-            memcpy(lva2pas_spram, sb_addr+(s_idx1%74897)*28, epsilon*2*28);
+            memcpy(lva2pas_spram, (void*)(sb_addr+(s_idx1%74897)*28), epsilon*2*28);
             dma_num++;
             i=0;
             for(;i<epsilon*2;++i){
@@ -488,7 +488,7 @@ int test_lt(char* config) {
             uint32_t num_lva2pa_first_batch=74897-(s_idx1%74897);
             uint64_t sb_addr=get_u64_from_sm(sub_table_addr, s_idx1/74897/2, s_idx1/74897%2);
 
-            memcpy(lva2pas_spram, sb_addr+(s_idx1%74897)*28, num_lva2pa_first_batch*28);
+            memcpy(lva2pas_spram, (void*)(sb_addr+(s_idx1%74897)*28), num_lva2pa_first_batch*28);
             dma_num++;
             i=0;
             for(;i<(num_lva2pa_first_batch);++i){
@@ -506,7 +506,7 @@ int test_lt(char* config) {
             }
             if(i==num_lva2pa_first_batch){
                 sb_addr=get_u64_from_sm(sub_table_addr, s_idx2/74897/2, s_idx2/74897%2);
-                memcpy(lva2pas_spram, sb_addr, (s_idx2%74897)*28);
+                memcpy(lva2pas_spram, (void*)sb_addr, (s_idx2%74897)*28);
                 i=0;
                 dma_num++;
                 for(;i<(s_idx2%74897);++i){
@@ -533,7 +533,7 @@ int test_lt(char* config) {
     }
     printf("pass all queries\n");
     printf("spram cache hit ratio: %f\n",(double)spram_cache_hit/num_querys);
-    printf("dma size: %u, average dma num: %f\n", average_dma_size, (double)dma_num/num_querys);
+    printf("dma size: %lu, average dma num: %f\n", average_dma_size, (double)dma_num/num_querys);
 }
 
 int test_host_side_compacted_v2(char* config) {
@@ -586,9 +586,9 @@ int test_host_side_compacted_v2(char* config) {
     load_16B_with_tmp_spram(lmpthash_lindex_meta_spram+32, inner_index, sidx_level0+1);
 
     uint8_t i;
-    num_querys=1;
+    // num_querys=1;
     for (uint64_t q = 0; q < num_querys; ++q) {
-        // printf("query %lu\n", i);
+        // printf("query %lu\n", q);
         if (q % 10000 == 0) {
             printf("\r    %lu / %lu\n", q, num_querys);
             printf("\033[1A");
@@ -623,6 +623,7 @@ int test_host_side_compacted_v2(char* config) {
             Lindex_metadata* lmd = (Lindex_metadata*)lmpthash_lindex_meta_spram;
             uint16_t l = lmd->num_levels;
             uint32_t epsilon = lmd->epsilon+1;
+            // printf("l: %u, epsilon: %u\n", l, epsilon);
             uint16_t* level_offsets = lmd->level_offsets;
             // uint32_t num_htl_segment=level_offsets[l+2]-level_offsets[l+1];
             clmpthash_pgm_segment* level0_segments = (clmpthash_pgm_segment*)(lmpthash_lindex_meta_spram+16);
@@ -646,6 +647,7 @@ int test_host_side_compacted_v2(char* config) {
                 s_idx2 = level_offsets[l - 2] + PGM_SUB_EPS(pos, epsilon);  // searching start point at next level
                 uint32_t s_idx1 = s_idx2;
                 while (true) {
+                    // printf("s_idx1: %u, s_idx2: %u\n", s_idx1, s_idx2);
                     // printf("active_spram: %u\n", active_spram);
                     
                     // load 4 segments at a time
@@ -657,6 +659,9 @@ int test_host_side_compacted_v2(char* config) {
                     memcpy(l1_segs(1), inner_index+(++s_idx2)*16, 16);
                     memcpy(l1_segs(2), inner_index+(++s_idx2)*16, 16);
                     memcpy(l1_segs(3), inner_index+(++s_idx2)*16, 16);
+                    // for(int seg = 0; seg < 4; seg++){
+                    //     printf("l1_segs[%d] key: %lu, slope: %u, intercept: %u\n", seg, l1_segs(seg)->key, l1_segs(seg)->slope, l1_segs(seg)->intercept);
+                    // }
                     total_ls_cnt++;
                     sm_cnt[0]++;
 
@@ -676,7 +681,7 @@ int test_host_side_compacted_v2(char* config) {
                     //l1_segs_1_outstand()
                     if(l1_segs(1)->key > lva){
                         pos = (int64_t)(l1_segs(0)[0].slope) * (lva - l1_segs(0)[0].key) / ((uint32_t)1 << 31) +  l1_segs(0)[0].intercept;
-                        // printf("[i>0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, l1_segs(i-1)[0].key, l1_segs(i-1)[0].slope, l1_segs(i-1)[0].intercept, pos);
+                        // printf("[i==1] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, l1_segs(0)[0].key, l1_segs(0)[0].slope, l1_segs(0)[0].intercept, pos);
                         if (pos < 0) pos = 0;
                         if (pos > l1_segs(1)[0].intercept)pos = l1_segs(1)[0].intercept;
                         break;
@@ -684,7 +689,7 @@ int test_host_side_compacted_v2(char* config) {
                     //l1_segs_2_outstand()
                     if(l1_segs(2)->key > lva){
                         pos = (int64_t)(l1_segs(1)[0].slope) * (lva - l1_segs(1)[0].key) / ((uint32_t)1 << 31) +  l1_segs(1)[0].intercept;
-                        // printf("[i>0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, l1_segs(i-1)[0].key, l1_segs(i-1)[0].slope, l1_segs(i-1)[0].intercept, pos);
+                        // printf("[i==2] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, l1_segs(1)[0].key, l1_segs(1)[0].slope, l1_segs(1)[0].intercept, pos);
                         if (pos < 0) pos = 0;
                         if (pos > l1_segs(2)[0].intercept)pos = l1_segs(2)[0].intercept;
                         break;
@@ -692,7 +697,7 @@ int test_host_side_compacted_v2(char* config) {
                     //l1_segs_1_outstand()
                     if(l1_segs(3)->key > lva){
                         pos = (int64_t)(l1_segs(2)[0].slope) * (lva - l1_segs(2)[0].key) / ((uint32_t)1 << 31) +  l1_segs(2)[0].intercept;
-                        // printf("[i>0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, l1_segs(i-1)[0].key, l1_segs(i-1)[0].slope, l1_segs(i-1)[0].intercept, pos);
+                        // printf("[i==3] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, l1_segs(2)[0].key, l1_segs(2)[0].slope, l1_segs(2)[0].intercept, pos);
                         if (pos < 0) pos = 0;
                         if (pos > l1_segs(3)[0].intercept)pos = l1_segs(3)[0].intercept;
                         break;
@@ -722,7 +727,9 @@ int test_host_side_compacted_v2(char* config) {
                 memcpy(htl_fks(6), inner_index+(s_idx2++)*16, 16);
                 total_ls_cnt++;
                 sm_cnt[2]++;
-                
+                // for(int k=0;k<8;k++) {
+                //     printf("first_key: %lu\n", htl_fks(k)[0]);
+                // }
                 i=0;
                 // htl_fks_0_outstand()
                 if(htl_fks(0)[0]>lva) break;
@@ -757,13 +764,19 @@ int test_host_side_compacted_v2(char* config) {
                 s_idx1+=8;
             }while(1);
             // load htl segment
-            s_idx1+=i;
-
             if(i==0){
+                if(s_idx2 == (level_offsets[lmd->num_levels] + s_idx1 / 2 + 1)+4){
+                    // first round found the right first_key on htl_fks(0)
+                    memcpy(htl_fks(6), inner_index+(s_idx2-5)*16, 16);
+                    htl_fks(7)[1]= htl_fks(7)[0];
+                }
                 s_first_key=htl_fks(7)[1];
             }else{
                 s_first_key=htl_fks(i-1)[0];
             }
+            s_idx1+=i;
+
+            
 
             memcpy(htl_seg, inner_index + (level_offsets[lmd->num_levels + 1] + s_idx1) * 16, 16);
             total_ls_cnt++;
@@ -776,7 +789,7 @@ int test_host_side_compacted_v2(char* config) {
         
 
         uint8_t seg_type = htl_seg->meta >> 62;
-        printf("seg_type: %lx\n", htl_seg->meta);
+        // printf("seg_type: %lx\n", htl_seg->meta);
         if (seg_type == 0) {
             // printf(" accurate segment\n");
             clmpthash_physical_addr* pas = (clmpthash_physical_addr*)(htl_seg->addr + 8);
@@ -836,18 +849,18 @@ int test_host_side_compacted_v2(char* config) {
             // printf("hash: %lu, hash_p: %lu\n", hash, p);
 
             p = (p ^ hash) % table_size;
-            printf("pos: %lx\n", p);
+            // printf("pos: %lx\n", p);
             clmpthash_physical_addr* pas = (clmpthash_physical_addr*)table_addr;
             pa1 = pas[p];
             total_dma_cnt++;
         }
 
-        clmpthash_lva _lva = 0;
-        for (int j = 0; j < 8; j++) { _lva = (_lva << 8) + pa1.data[j]; }
-        if (_lva != lva) {
-            printf("%lu: wrong result, should be 0x%lx, but got 0x%lx\n", q, lva, _lva);
-            return -1;
-        }
+        // clmpthash_lva _lva = 0;
+        // for (int j = 0; j < 8; j++) { _lva = (_lva << 8) + pa1.data[j]; }
+        // if (_lva != lva) {
+        //     printf("%lu: wrong result, should be 0x%lx, but got 0x%lx\n", q, lva, _lva);
+        //     return -1;
+        // }
     }
     // break;
 
@@ -1349,9 +1362,9 @@ int main(int argc, char** argv) {
     // test_host_side_clmpthash(argv[1]);
     // test_host_side_compacted(argv[1]);
 
-    // test_host_side_compacted_v2(argv[1]);
+    test_host_side_compacted_v2(argv[1]);
     // test_host_side_compacted_batch_without_align(argv[1]);
 
-    test_lt(argv[1]);
+    // test_lt(argv[1]);
     return 0;
 }

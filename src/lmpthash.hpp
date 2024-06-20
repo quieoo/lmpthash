@@ -667,24 +667,26 @@ struct LMPTHashBuilder{
 
         // binary search for a minimum PGM height
         slogger.func_log(0, "    binary search for a minimum PGM height\n");
-        int min_height=INT32_MAX;
-        int l=cfg.left_epsilon, r=cfg.right_epsilon;
-        while(l<=r){
-            int mid=(l+r)/2;
-            pgm::PGMIndex<Key, 64,4,uint32_t> pgm(segment_offsets, mid, mid);
-            int height=pgm.height();
-            slogger.func_log(0, "    mid: %d, height: %d\n", mid, height);
-            if(height<min_height){
-                min_height=height;
-                l=mid+1;
-            }else{
-                r=mid-1;
-            }
-        }
+        pgm::PGMIndex<Key, 64,4,uint32_t> pgm(segment_offsets, cfg.right_epsilon, cfg.right_epsilon);
+
+        int min_height=pgm.height();
+        // int l=cfg.left_epsilon, r=cfg.right_epsilon;
+        // while(l<=r){
+        //     int mid=(l+r)/2;
+        //     pgm::PGMIndex<Key, 64,4,uint32_t> pgm(segment_offsets, mid, mid);
+        //     int height=pgm.height();
+        //     slogger.func_log(0, "    mid: %d, height: %d\n", mid, height);
+        //     if(height<min_height){
+        //         min_height=height;
+        //         l=mid+1;
+        //     }else{
+        //         r=mid-1;
+        //     }
+        // }
 
         // binary search for a minimum epsilon that generates the minimum height
         slogger.func_log(0, "    binary search for a minimum epsilon that generates the minimum height\n");
-        l=cfg.left_epsilon, r=cfg.right_epsilon;
+        int l=cfg.left_epsilon, r=cfg.right_epsilon;
         int ep=-1;
         while(l<=r){
             int mid=(l+r)/2;
