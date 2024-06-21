@@ -878,7 +878,7 @@ struct LMPTHashBuilder{
                 uint64_t pilot_size=pthash_map[i].pilot_bytes();
 
                 uint64_t total_size=table_size+pilot_size+sizeof(uint64_t);
-                // printf("seg-%ld, table_size: %ld, pilot_size: %ld, total_size: %ld\n", i, table_size, pilot_size, total_size);
+                printf("seg-%ld, table_size: %f MB, pilot_size: %ld, total_size: %ld\n", i, (double)table_size/1024/1024, pilot_size, total_size);
                 uint8_t* raw_table;
                 try{
                     raw_table = new uint8_t[total_size];

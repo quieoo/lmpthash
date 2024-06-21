@@ -10,4 +10,4 @@ dynamic_alpha 1
 alpha_limits 0.8
 left_epsilon 1
 right_epsilon 100
-trace_path /home/quieoo/ftl/trace/MSR-Cambridge/proj_1.csv
+trace_path /home/quieoo/ftl/trace/MSR-Cambridge/prn_1.csv

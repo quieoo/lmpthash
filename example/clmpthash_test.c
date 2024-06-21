@@ -463,65 +463,127 @@ int test_lt(char* config) {
         // get sub_table addr
         uint64_t* sub_table_addr=(uint64_t*)(inner_index+1024*1024+8);
 
+        // uint16_t dma_width=640;
         // printf("bottom level, local search %u : %u \n", s_idx1, s_idx2);
         // if split to 2 bufs, 74897 lva2pas in each dma bufer
         if(s_idx1/74897 == s_idx2/74897){
             // dma with width=(epsilon*2)*28
             uint64_t sb_addr=get_u64_from_sm(sub_table_addr, s_idx1/74897/2, s_idx1/74897%2);
-            memcpy(lva2pas_spram, (void*)(sb_addr+(s_idx1%74897)*28), epsilon*2*28);
-            dma_num++;
-            i=0;
-            for(;i<epsilon*2;++i){
-                // printf("i: %u, lva: %lu\n",i, *(lva2pa_lva(i)));
-                // printf("pa:\n");
-                // for(int p=0;p<20;++p){
-                //     printf("%02x ", lva2pa_pa(i)[0].data[p]);
-                // }
-                // printf("\n");
-                if(*(lva2pa_lva(i)) == lva){
-                    pa1=*(lva2pa_pa(i));
-                    break;
+            sb_addr+=(s_idx1%74897)*28;
+            uint64_t end_addr=sb_addr+(epsilon*2)*28;
+            uint8_t found=0;
+            while(sb_addr<end_addr){
+                uint16_t dma_width=(uint16_t)(end_addr-sb_addr);
+                if(dma_width>640) dma_width=640;
+                // dma_width align to 28 bytes
+                if(dma_width%28!=0) dma_width-=(dma_width%28);
+                memcpy(lva2pas_spram, (void*)sb_addr, dma_width);
+                dma_num++;
+                sb_addr+=dma_width;
+                i=0;
+                for(;i<dma_width/28;++i){
+                    if(*(lva2pa_lva(i)) == lva){
+                        pa1=*(lva2pa_pa(i));
+                        found=1;
+                        break;
+                    }
                 }
+                if(found)   break;
             }
+            // memcpy(lva2pas_spram, (void*)(sb_addr+(s_idx1%74897)*28), epsilon*2*28);
+            // dma_num++;
+            // i=0;
+            // for(;i<epsilon*2;++i){
+            //     // printf("i: %u, lva: %lu\n",i, *(lva2pa_lva(i)));
+            //     // printf("pa:\n");
+            //     // for(int p=0;p<20;++p){
+            //     //     printf("%02x ", lva2pa_pa(i)[0].data[p]);
+            //     // }
+            //     // printf("\n");
+            //     if(*(lva2pa_lva(i)) == lva){
+            //         pa1=*(lva2pa_pa(i));
+            //         break;
+            //     }
+            // }
         }else{
             // dma 2 times untile find the right pa
             uint32_t num_lva2pa_first_batch=74897-(s_idx1%74897);
             uint64_t sb_addr=get_u64_from_sm(sub_table_addr, s_idx1/74897/2, s_idx1/74897%2);
-
-            memcpy(lva2pas_spram, (void*)(sb_addr+(s_idx1%74897)*28), num_lva2pa_first_batch*28);
-            dma_num++;
-            i=0;
-            for(;i<(num_lva2pa_first_batch);++i){
-                
-                // printf("i: %u, lva: %lu\n",i, *(lva2pa_lva(i)));
-                // printf("pa:\n");
-                // for(int p=0;p<20;++p){
-                //     printf("%02x ", lva2pa_pa(i)[0].data[p]);
-                // }
-                // printf("\n");
-                if(*(lva2pa_lva(i)) == lva){
-                    pa1=*(lva2pa_pa(i));
-                    break;
-                }
-            }
-            if(i==num_lva2pa_first_batch){
-                sb_addr=get_u64_from_sm(sub_table_addr, s_idx2/74897/2, s_idx2/74897%2);
-                memcpy(lva2pas_spram, (void*)sb_addr, (s_idx2%74897)*28);
-                i=0;
+            sb_addr+=(s_idx1%74897)*28;
+            uint64_t end_addr=sb_addr+(num_lva2pa_first_batch)*28;
+            uint8_t found=0;
+            while(sb_addr<end_addr){
+                uint16_t dma_width=(uint16_t)(end_addr-sb_addr);
+                if(dma_width>640) dma_width=640;
+                // dma_width align to 28 bytes
+                if(dma_width%28!=0) dma_width-=(dma_width%28);
+                memcpy(lva2pas_spram, (void*)sb_addr, dma_width);
                 dma_num++;
-                for(;i<(s_idx2%74897);++i){
-                    
-                    // printf("i: %u, lva: %lu\n",i, *(lva2pa_lva(i)));
-                    // printf("pa:\n");
-                    // for(int p=0;p<20;++p){
-                    //     printf("%02x ", lva2pa_pa(i)[0].data[p]);
-                    // }
-                    // printf("\n");
+                sb_addr+=dma_width;
+                i=0;
+                for(;i<(dma_width/28);++i){
                     if(*(lva2pa_lva(i)) == lva){
                         pa1=*(lva2pa_pa(i));
+                        found=1;
                         break;
                     }
                 }
+                if(found)   break;
+            }
+            // memcpy(lva2pas_spram, (void*)(sb_addr+(s_idx1%74897)*28), num_lva2pa_first_batch*28);
+            // dma_num++;
+            // i=0;
+            // for(;i<(num_lva2pa_first_batch);++i){
+                
+            //     // printf("i: %u, lva: %lu\n",i, *(lva2pa_lva(i)));
+            //     // printf("pa:\n");
+            //     // for(int p=0;p<20;++p){
+            //     //     printf("%02x ", lva2pa_pa(i)[0].data[p]);
+            //     // }
+            //     // printf("\n");
+            //     if(*(lva2pa_lva(i)) == lva){
+            //         pa1=*(lva2pa_pa(i));
+            //         break;
+            //     }
+            // }
+            if(!found){
+                sb_addr=get_u64_from_sm(sub_table_addr, s_idx2/74897/2, s_idx2/74897%2);
+                end_addr=sb_addr+(s_idx2%74897)*28;
+                while(sb_addr<end_addr){
+                    uint16_t dma_width=(uint16_t)(end_addr-sb_addr);
+                    if(dma_width>640) dma_width=640;
+                    // dma_width align to 28 bytes
+                    if(dma_width%28!=0) dma_width-=(dma_width%28);
+                    memcpy(lva2pas_spram, (void*)sb_addr, dma_width);
+                    dma_num++;
+                    sb_addr+=dma_width;
+                    i=0;
+                    for(;i<(dma_width/28);++i){
+                        if(*(lva2pa_lva(i)) == lva){
+                            pa1=*(lva2pa_pa(i));
+                            found=1;
+                            break;
+                        }
+                    }
+                    if(found)   break;
+                }
+
+                // memcpy(lva2pas_spram, (void*)sb_addr, (s_idx2%74897)*28);
+                // i=0;
+                // dma_num++;
+                // for(;i<(s_idx2%74897);++i){
+                    
+                //     // printf("i: %u, lva: %lu\n",i, *(lva2pa_lva(i)));
+                //     // printf("pa:\n");
+                //     // for(int p=0;p<20;++p){
+                //     //     printf("%02x ", lva2pa_pa(i)[0].data[p]);
+                //     // }
+                //     // printf("\n");
+                //     if(*(lva2pa_lva(i)) == lva){
+                //         pa1=*(lva2pa_pa(i));
+                //         break;
+                //     }
+                // }
             }
         }
         clmpthash_lva _lva = 0;
@@ -1362,9 +1424,9 @@ int main(int argc, char** argv) {
     // test_host_side_clmpthash(argv[1]);
     // test_host_side_compacted(argv[1]);
 
-    test_host_side_compacted_v2(argv[1]);
+    // test_host_side_compacted_v2(argv[1]);
     // test_host_side_compacted_batch_without_align(argv[1]);
 
-    // test_lt(argv[1]);
+    test_lt(argv[1]);
     return 0;
 }

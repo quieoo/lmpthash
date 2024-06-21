@@ -219,7 +219,8 @@ void* clt_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_
         uint32_t seg_num=pgm.segments_count();
         double seg_size=(double)seg_num*16/1024.0/1024.0;
         gslogger.func_log(0, "    mid: %d, seg_num: %d, size: %f MB\n", mid, seg_num, seg_size);
-        if(seg_size>1.0){
+        // if(seg_size>1.0){
+        if(seg_size>0.3){    
             l=mid+1;
         }else{
             r=mid-1;
