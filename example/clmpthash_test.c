@@ -1383,42 +1383,54 @@ int test_host_side_compacted_batch_without_align(char* config) {
     clmpthash_clean_offloaded_index(inner_index);
 }
 
+int test_pt(char* config){
+    clmpthash_config cfg;
+    clmpthash_lva* lvas;
+    clmpthash_physical_addr* pas;
+    clmpthash_lva* querys;
+    uint64_t num_lva;
+    uint64_t num_querys;
+    clmpthash_parse_configuration(config, &cfg, &lvas, &pas, &num_lva, &querys, &num_querys);
 
-// int nof_dpu_offload_index(void* index){
-//     uint32_t num_levels=*((uint16_t*)(index+16));
-//     uint16_t* level_offsets=(uint16_t*)(index+20);
+    void* inner_index = cpt_build_index(lvas, pas, num_lva, &cfg);
+    if (inner_index == NULL) {
+        printf("error building index\n");
+        return -1;
+    }
+    printf("build index done\n");
 
-//     // visit and offload table data
-//     clmpthash_htl_segment*
-//     htl_segs=(clmpthash_htl_segment*)(index+32+level_offsets[num_levels+1]*sizeof(clmpthash_pgm_segment));
-//     uint32_t num_htl_segment=level_offsets[num_levels+2]-level_offsets[num_levels+1];
-//     for(uint32_t i=0;i<num_htl_segment;i++){
-//         uint64_t* table=(uint64_t*)(htl_segs[i].addr);
-//         uint8_t seg_type=(htl_segs[i].meta)>>62;
-//         uint64_t table_size=table[0];
-//         // NOTE: current kernel driver noly support allocate 4MB dma buffer
-//         // TODO: alloc huge dma buffer by IOMMU（Input-Output Memory Management Unit） or
-//         CMA（Contiguous Memory Allocator), which may need to modify the kernel configuration
+    clmpthash_physical_addr pa1;
+    for (uint64_t q = 0; q < num_querys; ++q) {
+        // printf("query %lu\n", i);
+        if (q % 10000 == 0) {
+            printf("\r    %lu / %lu\n", q, num_querys);
+            printf("\033[1A");
+        }
 
-//         // PS: Only Accurate Segment will generage such a huge dma buffer,
-//         if(seg_type==0){
-//             // accurate segment
-//             uint32_t offload_size = (table_size-8) > 4*1024*1024 ? 4*1024*1024 : (table_size-8);
-//             // offload_to_kernel(table+8, offload_size);
-//         }else{
-//             uint32_t offload_size=(table_size-8);
-//             if(offload_size>4*1024*1024){
-//                 printf("error: offload size too large for a approximate segment\n");
-//                 return -1;
-//             }
-//             // offload_to_kernel(table+8, offload_size);
-//         }
-//     }
+        clmpthash_lva lva = querys[q];
 
-//     // offload Lindex to DPU
-//     offload_to_DPU(index, level_offsets[num_levels+2]*16);
+        uint64_t l1_addr=L1_SEG_ADDR(lva);
+        uint64_t* l1_table=(uint64_t*)inner_index;
 
-// }
+        uint64_t l2_table_addr=l1_table[l1_addr];
+        uint64_t* l2_table=(uint64_t*)l2_table_addr;
+        uint64_t l2_addr=L2_SEG_ADDR(lva);
+
+        uint64_t l3_table_addr=l2_table[l2_addr];
+        clmpthash_physical_addr* l3_table=(clmpthash_physical_addr*)l3_table_addr;
+        uint64_t l3_addr=L3_SEG_ADDR(lva);
+
+        pa1=l3_table[l3_addr];
+        clmpthash_lva _lva = 0;
+        for (int j = 0; j < 8; j++) { _lva = (_lva << 8) + pa1.data[j]; }
+        if (_lva != lva) {
+            printf("%lu: wrong result, should be %lu, but got %lu\n", q, lva, _lva);
+            return -1;
+        }
+    }
+
+    printf("all query passed\n");
+}
 
 int main(int argc, char** argv) {
     // test_host_side_clmpthash(argv[1]);
@@ -1427,6 +1439,8 @@ int main(int argc, char** argv) {
     // test_host_side_compacted_v2(argv[1]);
     // test_host_side_compacted_batch_without_align(argv[1]);
 
-    test_lt(argv[1]);
+    // test_lt(argv[1]);
+
+    test_pt(argv[1]);
     return 0;
 }

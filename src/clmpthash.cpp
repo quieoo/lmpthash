@@ -207,6 +207,7 @@ void* clt_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_
     pgm::PGMIndex<uint64_t, 64,4,uint32_t> pgm_index;
     // sort
     assert(std::is_sorted(keys.begin(), keys.end()));
+    printf("max key: %lx\n", keys[num-1]);
     
     //binary serach for a minimum epsilon that fits the inner nodes in limited memory
     gslogger.func_log(0, "    binary search for a minimum epsilon that fits the inner nodes in limited memory\n");
@@ -342,6 +343,71 @@ void* clt_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_
 
         sub_table_addr[buf_id++]=(uint64_t)sub_table;
         offset=last;
+    }
+
+    return inner_index;
+}
+
+/*
+leave the first 15 bits empty
+SM size limit=0.3MB -> l1_length=15
+DMA buffer size limit for addr=2MB -> l2_length=18
+DMA buffer size limit for PA=2MB -> l3_length=16
+*/
+
+
+void* cpt_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_t num, clmpthash_config* cfg){
+
+    lmpthash_config config;
+    config.alpha=cfg->alpha;
+    config.beta=cfg->beta;
+    config.gamma=cfg->gamma;
+    config.P=cfg->P;
+    config.hashed_num_bucket_c=cfg->hashed_num_bucket_c;
+    config.table_size_alpha=cfg->table_size_alpha;
+    config.max_bucket_size=cfg->max_bucket_size;
+    config.pilot_search_threshold=cfg->pilot_search_threshold;
+    config.dynamic_alpha=cfg->dynamic_alpha;
+    config.alpha_limits=cfg->alpha_limits;
+    config.left_epsilon=cfg->left_epsilon;
+    config.right_epsilon=cfg->right_epsilon;
+
+    std::vector<clmpthash_lva> keys(lvas, lvas+num);
+    std::vector<clmpthash_physical_addr> values(pas, pas+num);
+    pgm::PGMIndex<uint64_t, 64,4,uint32_t> pgm_index;
+    // sort
+    assert(std::is_sorted(keys.begin(), keys.end()));
+
+    uint64_t* inner_index=new uint64_t[1024*1024/8];
+    memset(inner_index, 0, 1024*1024);
+    for(uint64_t i=0;i<num;i++){
+        // printf("key: %llx\n", keys[i]);
+        // check lva 
+        if(keys[i]>>49){
+            printf("warning: lva %llx exceeds 49 bits\n", keys[i]);
+            return NULL;
+        }
+        uint64_t l1_addr=L1_SEG_ADDR(keys[i]);
+        // printf("l1_addr: %llx\n", l1_addr);
+        uint64_t* l2_table=(uint64_t*)(inner_index[l1_addr]);
+        if(l2_table==NULL){
+            l2_table=new uint64_t[L2_TABLE_NUM];
+            memset(l2_table, 0, L2_TABLE_NUM*sizeof(uint64_t));
+            inner_index[l1_addr]=(uint64_t)l2_table;
+        }
+
+        uint64_t l2_addr=L2_SEG_ADDR(keys[i]);
+        // printf("l2_addr: %llx\n", l2_addr);
+        clmpthash_physical_addr* l3_table=(clmpthash_physical_addr*)(l2_table[l2_addr]);
+        if(l3_table==NULL){
+            l3_table=new clmpthash_physical_addr[L3_TABLE_NUM];
+            memset(l3_table, 0, L3_TABLE_NUM*sizeof(clmpthash_physical_addr));
+            l2_table[l2_addr]=(uint64_t)l3_table;
+        }
+        
+        uint64_t l3_addr=L3_SEG_ADDR(keys[i]);
+        // printf("l3_addr: %llx\n", l3_addr);
+        l3_table[l3_addr]=values[i];
     }
 
     return inner_index;
