@@ -985,28 +985,15 @@ void parse_femu(std::vector<uint64_t>&  uniq_lpn, std::vector<uint64_t>& lpns, s
     // hash table for unique lpn
     std::unordered_set<uint64_t> ht;
 
-    // open file with name "filename", and read by lines
-    std::ifstream file(filename, std::ios::binary); // 以二进制方式打开文件
-    if (!file) {
-        std::cerr << "Failed to open file: " << filename << std::endl;
-        return;
+    //打开文件并逐行读取
+    std::ifstream infile(filename);
+    std::string date, time;
+    uint64_t lpn;
+    std::vector<uint64_t> data;
+    while (infile >> date >> time >> lpn) {
+        data.push_back(lpn);
     }
-    // 读取整个文件并存储在uint64_t数组中
-    // 获取文件大小
-    file.seekg(0, std::ios::end);
-    std::streampos filesize = file.tellg();
-    file.seekg(0, std::ios::beg);
-    // printf("file size: %f MB\n", filesize/1024.0/1024.0);
-    // 确定文件中包含多少个uint64_t
-    size_t num_elements = filesize / sizeof(uint64_t);
-    // 创建一个vector用于存储文件内容
-    std::vector<uint64_t> data(num_elements);
-    // 读取文件内容到vector中
-    if (!file.read(reinterpret_cast<char*>(data.data()), filesize)) {
-        std::cerr << "Failed to read file: " << filename << std::endl;
-        return;
-    }
-    file.close();
+    infile.close();
 
     for(size_t i=0;i<data.size();i++){
         // printf("%lx\n", data[i]);
