@@ -1400,7 +1400,7 @@ int test_pt(char* config){
     printf("build index done\n");
 
     clmpthash_physical_addr pa1;
-    for (uint64_t q = 0; q < num_querys; ++q) {
+    for (uint64_t q = 0; q < 1; ++q) {
         // printf("query %lu\n", i);
         if (q % 10000 == 0) {
             printf("\r    %lu / %lu\n", q, num_querys);
@@ -1408,6 +1408,7 @@ int test_pt(char* config){
         }
 
         clmpthash_lva lva = querys[q];
+        printf("query: 0x%lx\n", lva);
 
         uint64_t l1_addr=L1_SEG_ADDR(lva);
         uint64_t* l1_table=(uint64_t*)inner_index;

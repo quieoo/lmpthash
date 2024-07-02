@@ -84,12 +84,14 @@ void* clt_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_
 
 void* cpt_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_t num, clmpthash_config* cfg);
 
-#define L1_SEG_ADDR(x) ((x>>34)&0x7fff)
-#define L2_SEG_ADDR(x) ((x>>16)&0x3ffff)
+
+
+#define L1_SEG_ADDR(x) ((x>>33)&0x7fff)
+#define L2_SEG_ADDR(x) ((x>>16)&0x1ffff)
 #define L3_SEG_ADDR(x) (x&0xffff)
 
 #define L1_TABLE_NUM (1<<15)
-#define L2_TABLE_NUM (1<<18)
+#define L2_TABLE_NUM (1<<17)
 #define L3_TABLE_NUM (1<<16)
 
 #ifdef __cplusplus

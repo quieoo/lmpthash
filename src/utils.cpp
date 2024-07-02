@@ -154,6 +154,14 @@ int main(int argc, char** argv){
     printf("    <operation>: build_segs\n");
     printf("    <config_file_path>\n");
     printf("-------------------------\n");
+    printf("----Parse Trace Query----\n");
+    printf("    <operation>: parse_query\n");
+    printf("    <config_file_path>\n");
+    printf("-------------------------\n");
+    printf("----parse femu trace----\n");
+    printf("    <operation>: parse_femu\n");
+    printf("    <config_file_path>\n");
+    printf("-------------------------\n");
 
     if(strcmp(argv[1], "parse_csv")==0){
         std::vector<uint64_t> uniq_lpn;
@@ -172,6 +180,16 @@ int main(int argc, char** argv){
         merger.LoadKeys(uniq_lpn);
         merger.GreedyMerge();
         merger.ScoreSegs();
+    }else if(strcmp(argv[1], "parse_femu")==0){
+        std::vector<uint64_t> uniq_lpn;
+        std::vector<uint64_t> lpns;
+        parse_femu(uniq_lpn, lpns, std::string(argv[2]));
+        printf("parse: %s, %lu lpns, %lu uniq lpns\n", argv[2], lpns.size(), uniq_lpn.size());
+        // int window=1024*1024/8;
+        int window=1000;
+        int interval=10;
+        locality(lpns, interval, window);
+
     }else if(strcmp(argv[1], "parse_output_csv")==0){
         std::vector<uint64_t> access;
         std::vector<uint64_t> lpns;
@@ -200,9 +218,15 @@ int main(int argc, char** argv){
 
         builder.Verifing(uniq_lpn, ppns);
         builder.Cleaning();
-    }
-    else{
+    }else if(strcmp(argv[1], "parse_query")==0){
+        lmpthash_config cfg;
+        cfg.load_config(std::string(argv[2]));
+        std::vector<uint64_t> uniq_lpn;
+        std::vector<uint64_t> lpns;
+        parse_MSR_Cambridge(uniq_lpn, lpns, cfg.trace_path);
+        printf("parse: %s, %lu lpns, %lu uniq lpns\n", cfg.trace_path.c_str(), lpns.size(), uniq_lpn.size());
+        output_query_to_file(lpns, 1000*10000);
+    }else{
         printf("unknown operation\n");
     }
-
-} 
+}

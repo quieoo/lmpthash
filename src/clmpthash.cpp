@@ -349,10 +349,10 @@ void* clt_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_
 }
 
 /*
-leave the first 15 bits empty
+leave the first 16 bits empty
 SM size limit=0.3MB -> l1_length=15
-DMA buffer size limit for addr=2MB -> l2_length=18
-DMA buffer size limit for PA=2MB -> l3_length=16
+DMA buffer size limit for addr=2MB-16 -> l2_length=17
+DMA buffer size limit for PA=2MB-16 -> l3_length=16
 */
 
 
@@ -383,7 +383,7 @@ void* cpt_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_
     for(uint64_t i=0;i<num;i++){
         // printf("key: %llx\n", keys[i]);
         // check lva 
-        if(keys[i]>>49){
+        if(keys[i]>>48){
             printf("warning: lva %llx exceeds 49 bits\n", keys[i]);
             return NULL;
         }

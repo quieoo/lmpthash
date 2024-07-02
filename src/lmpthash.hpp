@@ -980,3 +980,56 @@ void parse_MSR_Cambridge(std::vector<uint64_t>&  uniq_lpn, std::vector<uint64_t>
     file.close();
     return;   
 }
+
+void parse_femu(std::vector<uint64_t>&  uniq_lpn, std::vector<uint64_t>& lpns, std::string filename){
+    // hash table for unique lpn
+    std::unordered_set<uint64_t> ht;
+
+    // open file with name "filename", and read by lines
+    std::ifstream file(filename);
+    std::string line;
+    uint64_t timestamp, offset, size, t0;
+    char trace_name[100];
+    char op[100];
+    int trace_id;
+    uint64_t lpn;
+    // 读取整个文件并存储在uint64_t数组中
+    // 获取文件大小
+    file.seekg(0, std::ios::end);
+    std::streampos filesize = file.tellg();
+    file.seekg(0, std::ios::beg);
+    // 确定文件中包含多少个uint64_t
+    size_t num_elements = filesize / sizeof(uint64_t);
+    // 创建一个vector用于存储文件内容
+    std::vector<uint64_t> data(num_elements);
+    // 读取文件内容到vector中
+    if (!file.read(reinterpret_cast<char*>(data.data()), filesize)) {
+        std::cerr << "Failed to read file: " << filename << std::endl;
+        return;
+    }
+    file.close();
+
+    for(size_t i=0;i<data.size();i++){
+        lpns.push_back(data[i]);
+        ht.insert(data[i]);
+    }
+    // get unique lpn
+    for (auto it = ht.begin(); it != ht.end(); it++){
+        uniq_lpn.push_back(*it);
+    }
+    // sort uniq_lpn
+    std::sort(uniq_lpn.begin(), uniq_lpn.end());
+    return;
+}
+
+
+void output_query_to_file(std::vector<uint64_t>& query, uint64_t n){
+    // create output csv file
+    std::ofstream outfile;
+    outfile.open("query.txt");
+    for(int i=0;i<n;i++){
+        outfile<<query[i]<<std::endl;
+    }
+    outfile.close();
+    return;
+}
