@@ -319,6 +319,7 @@ void* clt_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_
     memcpy(ptr, segs.data(), segs.size()*sizeof(clmpthash_pgm_segment));
 
     // split lvas and pas to buffers with 2097136 bytes
+    uint64_t sm_size=0;
     uint64_t lva2pa_size=sizeof(clmpthash_lva)+sizeof(clmpthash_physical_addr);
     uint64_t pas_in_buf=2097136/lva2pa_size;
     uint64_t num_bufs = (num + pas_in_buf - 1) / pas_in_buf;
@@ -335,7 +336,7 @@ void* clt_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_
         }
         // printf("    offset: %ld, last: %ld\n", offset, last);
         uint8_t* sub_table=new uint8_t[(last-offset)*lva2pa_size];
-
+        sm_size+=(last-offset)*lva2pa_size;
         for(uint64_t i=offset;i<last;i++){
             memcpy(sub_table+(i-offset)*lva2pa_size, lvas+i, sizeof(clmpthash_lva));
             memcpy(sub_table+(i-offset)*lva2pa_size+sizeof(clmpthash_lva), pas+i, sizeof(clmpthash_physical_addr));
@@ -344,7 +345,7 @@ void* clt_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_
         sub_table_addr[buf_id++]=(uint64_t)sub_table;
         offset=last;
     }
-
+    printf("#### CPU Memory Consumption: %f MB ####\n", (float)sm_size/(1024*1024));
     return inner_index;
 }
 
@@ -380,6 +381,8 @@ void* cpt_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_
 
     uint64_t* inner_index=new uint64_t[1024*1024/8];
     memset(inner_index, 0, 1024*1024);
+
+    uint64_t sm_size=0;
     for(uint64_t i=0;i<num;i++){
         // printf("key: %llx\n", keys[i]);
         // check lva 
@@ -394,6 +397,7 @@ void* cpt_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_
             l2_table=new uint64_t[L2_TABLE_NUM];
             memset(l2_table, 0, L2_TABLE_NUM*sizeof(uint64_t));
             inner_index[l1_addr]=(uint64_t)l2_table;
+            sm_size+=L2_TABLE_NUM*sizeof(uint64_t);
         }
 
         uint64_t l2_addr=L2_SEG_ADDR(keys[i]);
@@ -403,12 +407,13 @@ void* cpt_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_
             l3_table=new clmpthash_physical_addr[L3_TABLE_NUM];
             memset(l3_table, 0, L3_TABLE_NUM*sizeof(clmpthash_physical_addr));
             l2_table[l2_addr]=(uint64_t)l3_table;
+            sm_size+=L3_TABLE_NUM*sizeof(clmpthash_physical_addr);
         }
         
         uint64_t l3_addr=L3_SEG_ADDR(keys[i]);
         // printf("l3_addr: %llx\n", l3_addr);
         l3_table[l3_addr]=values[i];
     }
-
+    printf("### CPU Memory Consumption: %f MB ###\n", sm_size/1024.0/1024.0);
     return inner_index;
 }

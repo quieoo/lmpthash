@@ -858,12 +858,14 @@ struct LMPTHashBuilder{
 
         // each clmpthash_htl_segment takes 16 bytes
         p64=(uint64_t*)ptr;
+        uint64_t sm_size=0;
         for(int i=0; i<lmpt_segments.size();i++){
             if(lmpt_segments[i].seg_type==0){
                 // accurate segment
                 // allocate table data
                 uint64_t table_size=(lmpt_segments[i].size)*sizeof(Value)+sizeof(uint64_t);
                 uint8_t* raw_table=new uint8_t[table_size];
+                sm_size+=table_size;
                 p64[i*2]=(uint64_t)raw_table;
                 memcpy(raw_table, &table_size, sizeof(uint64_t));
                 memcpy(raw_table+sizeof(uint64_t), (void*)(lmpt_segments[i].next_addr), table_size-sizeof(uint64_t));                
@@ -886,6 +888,7 @@ struct LMPTHashBuilder{
                     std::cout<<"Error while Compacting: bad_alloc"<<e.what()<<std::endl;
                     return -1;
                 }
+                sm_size+=total_size-8;
                 p64[i*2]=(uint64_t)raw_table;
                 // copy table data
                 memcpy(raw_table, &total_size, sizeof(uint64_t));
@@ -945,6 +948,7 @@ struct LMPTHashBuilder{
                 p64[i*2+1]=pthash_meta;
             }
         }
+        printf("#### CPU Memory Consumption: %f MB ####\n", (double)sm_size/1024/1024);
         return 0;
     }
 };
