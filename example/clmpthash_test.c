@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
+#include <pthread.h>
+
 #define PGM_SUB_EPS(x, epsilon) ((x) <= (epsilon) ? 0 : ((x) - (epsilon)))
 
 int nof_dpu_offload_index(void* index);
@@ -1389,6 +1391,61 @@ int test_host_side_compacted_batch_without_align(char* config) {
 int cmp(const void* a, const void* b) {
     return *(uint64_t*)a - *(uint64_t*)b;
 }
+typedef struct {
+    void* inner_index;
+    uint64_t num_query;
+    uint64_t* querys;
+    int thread_id;
+    uint64_t* lats;
+} thread_arg_t;
+
+void* query_function(void* arg){
+    thread_arg_t* t=(thread_arg_t*)arg;
+    for (uint64_t q = 0; q < t->num_query; ++q) {
+        // printf("query %lu\n", i);
+        // if (q % 10000 == 0) {
+        //     printf("\r    %lu / %lu\n", q, num_querys);
+        //     printf("\033[1A");
+        // }
+        
+        // 开始时间，初始化
+        struct timespec start, end;
+        start.tv_sec = 0;
+        start.tv_nsec = 0;
+        end.tv_sec = 0;
+        end.tv_nsec = 0;
+        clock_gettime(CLOCK_MONOTONIC, &start);
+
+        clmpthash_lva lva = t->querys[q];
+        // printf("query: 0x%lx\n", lva);
+
+        uint64_t l1_addr=L1_SEG_ADDR(lva);
+        uint64_t* l1_table=(uint64_t*)(t->inner_index);
+
+        uint64_t l2_table_addr=l1_table[l1_addr];
+        uint64_t* l2_table=(uint64_t*)l2_table_addr;
+        uint64_t l2_addr=L2_SEG_ADDR(lva);
+
+        uint64_t l3_table_addr=l2_table[l2_addr];
+        clmpthash_physical_addr* l3_table=(clmpthash_physical_addr*)l3_table_addr;
+        uint64_t l3_addr=L3_SEG_ADDR(lva);
+
+        clmpthash_physical_addr pa1=l3_table[l3_addr];
+        clmpthash_lva _lva = 0;
+        for (int j = 0; j < 8; j++) { _lva = (_lva << 8) + pa1.data[j]; }
+        if (_lva != lva) {
+            printf("%lu: wrong result, should be %lu, but got %lu\n", q, lva, _lva);
+            pthread_exit(NULL);
+        }
+        // sleep(1);
+        // usleep(1);
+        // 结束时间
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        uint64_t lat=(end.tv_sec-start.tv_sec)*1000000000+(end.tv_nsec-start.tv_nsec);
+        t->lats[(t->thread_id)*(t->num_query)+q]=lat;
+    }
+    pthread_exit(NULL);
+}
 
 int test_pt(char* config){
     clmpthash_config cfg;
@@ -1406,69 +1463,45 @@ int test_pt(char* config){
     }
     printf("build index done\n");
 
-    clmpthash_physical_addr pa1;
-    //统计每个query的平均延迟，纳秒级别
-    uint64_t total_ls=0;
-    uint64_t* ls=(uint64_t*)malloc(sizeof(uint64_t)*num_querys);
+    //创建指定数量的线程，同时执行查询
+    int num_threads=256;
+    // num_querys=10;
 
-    for (uint64_t q = 0; q < num_querys; ++q) {
-        // printf("query %lu\n", i);
-        if (q % 10000 == 0) {
-            printf("\r    %lu / %lu\n", q, num_querys);
-            printf("\033[1A");
+    uint64_t* ls=(uint64_t*)malloc(sizeof(uint64_t)*num_querys*num_threads);
+    pthread_t threads[num_threads];
+    thread_arg_t args[num_threads];
+
+    for (int i = 0; i < num_threads; i++) {
+        args[i].inner_index=inner_index;
+        args[i].num_query=num_querys;
+        args[i].querys=querys;
+        args[i].thread_id=i;
+        args[i].lats=ls;
+        int rc=pthread_create(&threads[i], NULL, query_function, &args[i]);
+        if (rc) {
+            printf("ERROR; return code from pthread_create() is %d\n", rc);
+            exit(-1);
         }
-        
-        // 开始时间，初始化
-        struct timespec start, end;
-        start.tv_sec = 0;
-        start.tv_nsec = 0;
-        end.tv_sec = 0;
-        end.tv_nsec = 0;
-        clock_gettime(CLOCK_MONOTONIC, &start);
-
-        clmpthash_lva lva = querys[q];
-        // printf("query: 0x%lx\n", lva);
-
-        uint64_t l1_addr=L1_SEG_ADDR(lva);
-        uint64_t* l1_table=(uint64_t*)inner_index;
-
-        uint64_t l2_table_addr=l1_table[l1_addr];
-        uint64_t* l2_table=(uint64_t*)l2_table_addr;
-        uint64_t l2_addr=L2_SEG_ADDR(lva);
-
-        uint64_t l3_table_addr=l2_table[l2_addr];
-        clmpthash_physical_addr* l3_table=(clmpthash_physical_addr*)l3_table_addr;
-        uint64_t l3_addr=L3_SEG_ADDR(lva);
-
-        pa1=l3_table[l3_addr];
-        clmpthash_lva _lva = 0;
-        for (int j = 0; j < 8; j++) { _lva = (_lva << 8) + pa1.data[j]; }
-        if (_lva != lva) {
-            printf("%lu: wrong result, should be %lu, but got %lu\n", q, lva, _lva);
-            return -1;
-        }
-
-        // usleep(1);
-        // 结束时间
-        clock_gettime(CLOCK_MONOTONIC, &end);
-        uint64_t lat=(end.tv_sec-start.tv_sec)*1000000000+(end.tv_nsec-start.tv_nsec);
-        total_ls+=lat;
-        ls[q]=lat;
     }
 
-    printf("all query passed\n");
-    printf("average latency: %lf us\n",(double)(total_ls) / num_querys/1000);
+    for (int i = 0; i < num_threads; i++) {
+        pthread_join(threads[i], NULL);
+    }
+    
+    qsort(ls, num_querys*num_threads, sizeof(uint64_t), cmp);
+    // average latency
+    uint64_t total_ls=0;
+    for (int i = 0; i < num_querys*num_threads; i++) {
+        total_ls+=ls[i];
+    }
+    printf("average latency: %lf us\n",(double)(total_ls) / (num_querys*num_threads) / 1000);
 
-    // 获得ts的99百分位数
-    qsort(ls, num_querys, sizeof(uint64_t), cmp);
-    uint64_t ts=ls[(uint64_t)(num_querys*0.99)];
-    printf("0-th percentile latency: %lf us\n",(double)(ls[0]) / 1000);
-    printf("50th percentile latency: %lf us\n",(double)(ls[(uint64_t)(num_querys*0.5)]) / 1000);
-    printf("90th percentile latency: %lf us\n",(double)(ls[(uint64_t)(num_querys*0.9)]) / 1000);
-    printf("99th percentile latency: %lf us\n",(double)(ts) / 1000);
-    printf("999th percentile latency: %lf us\n",(double)(ls[(uint64_t)(num_querys*0.999)]) / 1000);
-    printf("9999th percentile latency: %lf us\n",(double)(ls[(uint64_t)(num_querys*0.9999)]) / 1000);
-
+    // tail latency
+    printf("50-th percentile latency: %lf us\n",(double)(ls[(uint64_t)(num_querys*num_threads*0.5)]) / 1000);
+    printf("90-th percentile latency: %lf us\n",(double)(ls[(uint64_t)(num_querys*num_threads*0.9)]) / 1000);
+    printf("99-th percentile latency: %lf us\n",(double)(ls[(uint64_t)(num_querys*num_threads*0.99)]) / 1000);
+    printf("99.9-th percentile latency: %lf us\n",(double)(ls[(uint64_t)(num_querys*num_threads*0.999)]) / 1000);
+    printf("99.99-th percentile latency: %lf us\n",(double)(ls[(uint64_t)(num_querys*num_threads*0.9999)]) / 1000);
     free(ls);
 }
 
