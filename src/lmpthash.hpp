@@ -319,22 +319,23 @@ struct lmpthash_config{
             else if(name=="left_epsilon") left_epsilon=std::stoi(value);
             else if(name=="right_epsilon") right_epsilon=std::stoi(value);
             else if(name=="trace_path") trace_path=value;
+            else if(name=="trace_type") trace_type=value;
         }
 
-        std::cout<<"================="<<config_file<<"=================="<<std::endl;
-        std::cout<<"alpha: "<<alpha<<std::endl;
-        std::cout<<"beta: "<<beta<<std::endl;
-        std::cout<<"gamma: "<<gamma<<std::endl;
-        std::cout<<"P: "<<P<<std::endl;
-        std::cout<<"hashed_num_bucket_c: "<<hashed_num_bucket_c<<std::endl;
-        std::cout<<"table_size_alpha: "<<table_size_alpha<<std::endl;
-        std::cout<<"max_bucket_size: "<<max_bucket_size<<std::endl;
-        std::cout<<"pilot_search_threshold: "<<pilot_search_threshold<<std::endl;
-        std::cout<<"dynamic_alpha: "<<dynamic_alpha<<std::endl;
-        std::cout<<"alpha_limits: "<<alpha_limits<<std::endl;
-        std::cout<<"left_epsilon: "<<left_epsilon<<std::endl;
-        std::cout<<"right_epsilon: "<<right_epsilon<<std::endl;
-        std::cout<<"trace_path: "<<trace_path<<std::endl;
+        // std::cout<<"================="<<config_file<<"=================="<<std::endl;
+        // std::cout<<"alpha: "<<alpha<<std::endl;
+        // std::cout<<"beta: "<<beta<<std::endl;
+        // std::cout<<"gamma: "<<gamma<<std::endl;
+        // std::cout<<"P: "<<P<<std::endl;
+        // std::cout<<"hashed_num_bucket_c: "<<hashed_num_bucket_c<<std::endl;
+        // std::cout<<"table_size_alpha: "<<table_size_alpha<<std::endl;
+        // std::cout<<"max_bucket_size: "<<max_bucket_size<<std::endl;
+        // std::cout<<"pilot_search_threshold: "<<pilot_search_threshold<<std::endl;
+        // std::cout<<"dynamic_alpha: "<<dynamic_alpha<<std::endl;
+        // std::cout<<"alpha_limits: "<<alpha_limits<<std::endl;
+        // std::cout<<"left_epsilon: "<<left_epsilon<<std::endl;
+        // std::cout<<"right_epsilon: "<<right_epsilon<<std::endl;
+        // std::cout<<"trace_path: "<<trace_path<<std::endl;
     }
 
 
@@ -356,7 +357,9 @@ struct lmpthash_config{
     int left_epsilon;
     int right_epsilon;
 
+    std::string trace_type;
     std::string trace_path;
+
 };
 
 struct LMPTSegment{

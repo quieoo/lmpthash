@@ -21,12 +21,36 @@ void cparse_msr_cambridge(clmpthash_lva** lvas, clmpthash_physical_addr** pas, u
     }
 }
 
+void cparse_femu(clmpthash_lva** lvas, clmpthash_physical_addr** pas, uint64_t* num_lva, clmpthash_lva** querys, uint64_t * num_querys, std::string trace_path){
+    std::vector<clmpthash_lva> uniq_lpn;
+    std::vector<clmpthash_lva> lpns;
+    parse_femu(uniq_lpn, lpns, trace_path);
+    *num_lva=uniq_lpn.size();
+    *num_querys=lpns.size();
+
+    *lvas=new clmpthash_lva[uniq_lpn.size()];
+    *querys=new clmpthash_lva[lpns.size()];
+    for(uint64_t i=0;i<uniq_lpn.size();i++){
+        (*lvas)[i]=uniq_lpn[i];
+    }
+    for(uint64_t i=0;i<lpns.size();i++){
+        (*querys)[i]=lpns[i];
+    }
+}
+
 void clmpthash_parse_configuration(char* config_path, clmpthash_config* cfg, clmpthash_lva** lvas, clmpthash_physical_addr** pas, uint64_t* num_lva, clmpthash_lva** querys, uint64_t* num_querys){
     lmpthash_config config;
     config.load_config(std::string(config_path));
 
-    // get trace file
-    cparse_msr_cambridge(lvas, pas, num_lva, querys, num_querys, config.trace_path);
+    if(config.trace_type=="msr"){
+        cparse_msr_cambridge(lvas, pas, num_lva, querys, num_querys, config.trace_path);
+    }else if(config.trace_type=="femu"){
+        cparse_femu(lvas, pas, num_lva, querys, num_querys, config.trace_path);
+    }else{
+        printf("unsupported trace type: %s\n", config.trace_type.c_str());
+        exit(0);
+    }
+    
     printf("    lva_num: %lu, query_num: %lu\n", *num_lva, *num_querys);
     // *pas=(clmpthash_physical_addr*)malloc(sizeof(clmpthash_physical_addr)*(*num_lva));
     *pas=new clmpthash_physical_addr[*num_lva];

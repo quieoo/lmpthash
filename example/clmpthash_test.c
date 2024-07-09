@@ -1464,7 +1464,7 @@ int test_pt(char* config){
     printf("build index done\n");
 
     //创建指定数量的线程，同时执行查询
-    int num_threads=256;
+    int num_threads=16;
     // num_querys=10;
 
     uint64_t* ls=(uint64_t*)malloc(sizeof(uint64_t)*num_querys*num_threads);
