@@ -25,6 +25,19 @@ void output_access(std::vector<uint64_t>& access){
     return;
 }
 
+void continurity(std::vector<uint64_t>& lpn){
+    // 确保lpn是连续的
+    assert(std::is_sorted(lpn.begin(), lpn.end()));
+    uint64_t con=0;
+    for(size_t i=1;i<lpn.size();i++){
+        if(lpn[i]==lpn[i-1]+1){
+            con++;
+        }
+    }
+    printf("Continuity: %f\n", (double)con/(lpn.size()-1));
+}
+
+
 void locality(std::vector<uint64_t>& access, int interval, int window){
     // 对于每个Access，与LPN值相距在"interval"之内的上一个Access之间相隔的访问次数
     std::vector<int> precedor;
@@ -42,9 +55,11 @@ void locality(std::vector<uint64_t>& access, int interval, int window){
     }
 
     // output
+    printf("locality: ");
     size_t sum=0;
     for(int i=1;i<window;i++){
         sum+=precedor[i];
+        if(i==1 || i==(window-1)) printf("%d-%f \n", i, (double)sum/access.size());
         printf("%d %f\n", i, (double)sum/access.size());
     }
     return;
