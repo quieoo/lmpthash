@@ -1,0 +1,9 @@
+[seqread]
+name=Sequential Read Test
+filename=/dev/nvme0n1
+rw=read
+bs=128k
+size=1G
+numjobs=4
+runtime=60
+group_reporting

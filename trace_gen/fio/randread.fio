@@ -1,0 +1,9 @@
+[randread]
+name=Random Read Test
+filename=/dev/nvme0n1
+rw=randread
+bs=4k
+size=1G
+numjobs=4
+runtime=60
+group_reporting
