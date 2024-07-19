@@ -162,6 +162,11 @@ int main(int argc, char** argv){
     printf("    <operation>: parse_femu\n");
     printf("    <config_file_path>\n");
     printf("-------------------------\n");
+    printf("----parse_femu_last_n----\n");
+    printf("    <operation>: parse_femu_last_n\n");
+    printf("    <n>\n");
+    printf("    <config_file_path>\n");
+    
 
     if(strcmp(argv[1], "parse_csv")==0){
         std::vector<uint64_t> uniq_lpn;
@@ -226,7 +231,34 @@ int main(int argc, char** argv){
         parse_MSR_Cambridge(uniq_lpn, lpns, cfg.trace_path);
         printf("parse: %s, %lu lpns, %lu uniq lpns\n", cfg.trace_path.c_str(), lpns.size(), uniq_lpn.size());
         output_query_to_file(lpns, 1000*10000);
-    }else{
+    }else if (strcmp(argv[1], "model_lindex")==0){
+        lmpthash_config cfg;
+        cfg.load_config(std::string(argv[2]));
+
+        std::vector<uint64_t> uniq_lpn;
+        std::vector<uint64_t> lpns;
+        parse_MSR_Cambridge(uniq_lpn, lpns, cfg.trace_path);
+        printf("parse: %s, %lu lpns, %lu uniq lpns\n", cfg.trace_path.c_str(), lpns.size(), uniq_lpn.size());
+
+        for(int ep=cfg.left_epsilon;ep<=cfg.right_epsilon;ep++){
+            pgm::PGMIndex<uint64_t, 64,4,uint32_t> pgm(uniq_lpn, ep,ep);
+            printf("%d \n", pgm.height());
+        }
+    }
+    else if(strcmp(argv[1], "parse_femu_last_n")==0){
+        int n=atoi(argv[2]);
+
+        std::vector<uint64_t> uniq_lpn;
+        std::vector<uint64_t> lpns;
+        parse_femu(uniq_lpn, lpns, std::string(argv[3]), n);
+        printf("parse: %s, %lu lpns, %lu uniq lpns\n", argv[2], lpns.size(), uniq_lpn.size());
+        // int window=1024*1024/8;
+        int window=1000;
+        int interval=10;
+        locality(lpns, interval, window);
+
+    }
+    else{
         printf("unknown operation\n");
     }
 }

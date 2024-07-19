@@ -988,7 +988,7 @@ void parse_MSR_Cambridge(std::vector<uint64_t>&  uniq_lpn, std::vector<uint64_t>
     return;   
 }
 
-void parse_femu(std::vector<uint64_t>&  uniq_lpn, std::vector<uint64_t>& lpns, std::string filename){
+void parse_femu(std::vector<uint64_t>&  uniq_lpn, std::vector<uint64_t>& lpns, std::string filename, int n=0){
     // hash table for unique lpn
     std::unordered_set<uint64_t> ht;
 
@@ -1002,10 +1002,16 @@ void parse_femu(std::vector<uint64_t>&  uniq_lpn, std::vector<uint64_t>& lpns, s
     }
     infile.close();
 
-    for(size_t i=0;i<data.size();i++){
-        // printf("%lx\n", data[i]);
-        lpns.push_back(data[i]);
-        ht.insert(data[i]);
+    if(n!=0 && n<data.size()){
+        for(size_t i=n;i<data.size();i++){
+            lpns.push_back(data[i]);
+            ht.insert(data[i]);
+        }
+    }else{
+        for(size_t i=0;i<data.size();i++){
+            lpns.push_back(data[i]);
+            ht.insert(data[i]);
+        }
     }
     // get unique lpn
     for (auto it = ht.begin(); it != ht.end(); it++){
