@@ -1509,14 +1509,25 @@ int test_pt(char* config){
 void build_index_with_scale(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_t num, clmpthash_config* cfg, int scale){
     printf("=========build index with scale %d=========\n", scale);
     // scale the lvas
+    clmpthash_lva* new_lvas=NULL;
+    clmpthash_physical_addr* new_pas=NULL;
     clmpthash_lva max_lva=lvas[num-1];
+    printf("max lva: %lu\n", max_lva);
     uint64_t old_num=num;
     num=num*scale;
-    lvas=(clmpthash_lva*)realloc(lvas, num*sizeof(clmpthash_lva));
-    pas=(clmpthash_physical_addr*)realloc(pas, num*sizeof(clmpthash_physical_addr));
+    new_lvas=(clmpthash_lva*)malloc(num*sizeof(clmpthash_lva));
+    if (new_lvas == NULL) {
+        printf("error allocating memory for lvas\n");
+        return;
+    }
+    new_pas=(clmpthash_physical_addr*)malloc(num*sizeof(clmpthash_physical_addr));
+    if (new_pas == NULL) {
+        printf("error allocating memory for lvas\n");
+        return;
+    }
     for (int i = 0; i < num; i++) {
-        lvas[i]=lvas[i%old_num]+(i/old_num)*max_lva;
-        pas[i]=pas[i%old_num];
+        new_lvas[i]=lvas[i%old_num]+(i/old_num)*max_lva;
+        new_pas[i]=pas[i%old_num];
     }
     printf("old num: %lu, new num: %lu\n", old_num, num);
     printf("--------build page table--------\n");
@@ -1534,6 +1545,9 @@ void build_index_with_scale(clmpthash_lva* lvas, clmpthash_physical_addr* pas, u
     }
 
     clmpthash_offload_index(index);
+
+    free(new_lvas);
+    free(new_pas);
 }
 
 void scalability_benchmarks(char* config){
@@ -1546,7 +1560,10 @@ void scalability_benchmarks(char* config){
     clmpthash_parse_configuration(config, &cfg, &lvas, &pas, &num_lva, &querys, &num_querys);
 
     build_index_with_scale(lvas, pas, num_lva, &cfg, 1);
-    build_index_with_scale(lvas, pas, num_lva, &cfg, 10);
+    build_index_with_scale(lvas, pas, num_lva, &cfg, 2);
+    build_index_with_scale(lvas, pas, num_lva, &cfg, 4);
+    build_index_with_scale(lvas, pas, num_lva, &cfg, 8);
+    build_index_with_scale(lvas, pas, num_lva, &cfg, 16);
 }
 
 int main(int argc, char** argv) {
