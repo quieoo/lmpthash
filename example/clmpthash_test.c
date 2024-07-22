@@ -1531,14 +1531,14 @@ void build_index_with_scale(clmpthash_lva* lvas, clmpthash_physical_addr* pas, u
     }
     printf("old num: %lu, new num: %lu\n", old_num, num);
     printf("--------build page table--------\n");
-    cpt_build_index(lvas, pas, num, cfg);
+    cpt_build_index(new_lvas, new_pas, num, cfg);
 
     printf("--------build learned table--------\n");
-    clt_build_index(lvas, pas, num, cfg);
+    clt_build_index(new_lvas, new_pas, num, cfg);
 
     printf("--------build lmpht--------\n");
 
-    void* index = clmpthash_build_index(lvas, pas, num, cfg);
+    void* index = clmpthash_build_index(new_lvas, new_pas, num, cfg);
     if (index == NULL) {
         printf("error building index\n");
         return -1;
