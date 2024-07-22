@@ -60,7 +60,7 @@ void locality(std::vector<uint64_t>& access, int interval, int window){
     for(int i=1;i<window;i++){
         sum+=precedor[i];
         if(i==1 || i==(window-1)) printf("%d-%f \n", i, (double)sum/access.size());
-        printf("%d %f\n", i, (double)sum/access.size());
+        // printf("%d %f\n", i, (double)sum/access.size());
     }
     return;
 }
@@ -161,28 +161,6 @@ struct PhyAddr{
 };
 
 int main(int argc, char** argv){
-    printf("Utils Usage\n");
-    printf("----parse trace files----\n");
-    printf("    <operation>: parse_csv, parse_output_csv\n");
-    printf("    <filename>\n");
-    printf("----build segments----\n");
-    printf("    <operation>: build_segs\n");
-    printf("    <config_file_path>\n");
-    printf("-------------------------\n");
-    printf("----Parse Trace Query----\n");
-    printf("    <operation>: parse_query\n");
-    printf("    <config_file_path>\n");
-    printf("-------------------------\n");
-    printf("----parse femu trace----\n");
-    printf("    <operation>: parse_femu\n");
-    printf("    <config_file_path>\n");
-    printf("-------------------------\n");
-    printf("----parse_femu_last_n----\n");
-    printf("    <operation>: parse_femu_last_n\n");
-    printf("    <n>\n");
-    printf("    <config_file_path>\n");
-    
-
     if(strcmp(argv[1], "parse_csv")==0){
         std::vector<uint64_t> uniq_lpn;
         std::vector<uint64_t> lpns;
@@ -195,11 +173,11 @@ int main(int argc, char** argv){
         // locality(lpns, interval, window);
         // num_segments(uniq_lpn);
 
-        MonoSegmentMerger<uint64_t> merger(0.5, 0.5, 0.5, 65536*9/10);
-        // MonoSegmentMerger<uint64_t> merger(0.5, 0.5, 0.5, 3000);
-        merger.LoadKeys(uniq_lpn);
-        merger.GreedyMerge();
-        merger.ScoreSegs();
+        // MonoSegmentMerger<uint64_t> merger(0.5, 0.5, 0.5, 65536*9/10);
+        // // MonoSegmentMerger<uint64_t> merger(0.5, 0.5, 0.5, 3000);
+        // merger.LoadKeys(uniq_lpn);
+        // merger.GreedyMerge();
+        // merger.ScoreSegs();
     }else if(strcmp(argv[1], "parse_femu")==0){
         std::vector<uint64_t> uniq_lpn;
         std::vector<uint64_t> lpns;
@@ -209,8 +187,29 @@ int main(int argc, char** argv){
         int window=1000;
         int interval=10;
         locality(lpns, interval, window);
-
-    }else if(strcmp(argv[1], "parse_output_csv")==0){
+        continurity(uniq_lpn);
+    }else if(strcmp(argv[1], "parse_spc")==0){
+        std::vector<uint64_t> uniq_lpn;
+        std::vector<uint64_t> lpns;
+        parse_spc(uniq_lpn, lpns, std::string(argv[2]));
+        printf("parse: %s, %lu lpns, %lu uniq lpns\n", argv[2], lpns.size(), uniq_lpn.size());
+        // int window=1024*1024/8;
+        int window=1000;
+        int interval=10;
+        locality(lpns, interval, window);
+        continurity(uniq_lpn);
+    }else if(strcmp(argv[1], "parse_trace")==0){
+        std::vector<uint64_t> uniq_lpn;
+        std::vector<uint64_t> lpns;
+        parse_trace(uniq_lpn, lpns, std::string(argv[2]));
+        printf("parse: %s, %lu lpns, %lu uniq lpns\n", argv[2], lpns.size(), uniq_lpn.size());
+        // int window=1024*1024/8;
+        int window=1000;
+        int interval=10;
+        locality(lpns, interval, window);
+        continurity(uniq_lpn);
+    }
+    else if(strcmp(argv[1], "parse_output_csv")==0){
         std::vector<uint64_t> access;
         std::vector<uint64_t> lpns;
         parse_MSR_Cambridge(lpns, access, std::string(argv[2]));
@@ -275,5 +274,25 @@ int main(int argc, char** argv){
     }
     else{
         printf("unknown operation\n");
+        printf("Utils Usage\n");
+        printf("----parse trace files----\n");
+        printf("    <operation>: parse_csv, parse_output_csv\n");
+        printf("    <filename>\n");
+        printf("----build segments----\n");
+        printf("    <operation>: build_segs\n");
+        printf("    <config_file_path>\n");
+        printf("-------------------------\n");
+        printf("----Parse Trace Query----\n");
+        printf("    <operation>: parse_query\n");
+        printf("    <config_file_path>\n");
+        printf("-------------------------\n");
+        printf("----parse femu trace----\n");
+        printf("    <operation>: parse_femu\n");
+        printf("    <config_file_path>\n");
+        printf("-------------------------\n");
+        printf("----parse_femu_last_n----\n");
+        printf("    <operation>: parse_femu_last_n\n");
+        printf("    <n>\n");
+        printf("    <config_file_path>\n");
     }
 }

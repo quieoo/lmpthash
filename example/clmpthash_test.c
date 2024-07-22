@@ -1505,6 +1505,50 @@ int test_pt(char* config){
     free(ls);
 }
 
+
+void build_index_with_scale(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_t num, clmpthash_config* cfg, int scale){
+    printf("=========build index with scale %d=========\n", scale);
+    // scale the lvas
+    clmpthash_lva max_lva=lvas[num-1];
+    uint64_t old_num=num;
+    num=num*scale;
+    lvas=(clmpthash_lva*)realloc(lvas, num*sizeof(clmpthash_lva));
+    pas=(clmpthash_physical_addr*)realloc(pas, num*sizeof(clmpthash_physical_addr));
+    for (int i = 0; i < num; i++) {
+        lvas[i]=lvas[i%old_num]+(i/old_num)*max_lva;
+        pas[i]=pas[i%old_num];
+    }
+    printf("old num: %lu, new num: %lu\n", old_num, num);
+    printf("--------build page table--------\n");
+    cpt_build_index(lvas, pas, num, cfg);
+
+    printf("--------build learned table--------\n");
+    clt_build_index(lvas, pas, num, cfg);
+
+    printf("--------build lmpht--------\n");
+
+    void* index = clmpthash_build_index(lvas, pas, num, cfg);
+    if (index == NULL) {
+        printf("error building index\n");
+        return -1;
+    }
+
+    clmpthash_offload_index(index);
+}
+
+void scalability_benchmarks(char* config){
+    clmpthash_config cfg;
+    clmpthash_lva* lvas;
+    clmpthash_physical_addr* pas;
+    clmpthash_lva* querys;
+    uint64_t num_lva;
+    uint64_t num_querys;
+    clmpthash_parse_configuration(config, &cfg, &lvas, &pas, &num_lva, &querys, &num_querys);
+
+    build_index_with_scale(lvas, pas, num_lva, &cfg, 1);
+    build_index_with_scale(lvas, pas, num_lva, &cfg, 10);
+}
+
 int main(int argc, char** argv) {
     // test_host_side_clmpthash(argv[1]);
     // test_host_side_compacted(argv[1]);
@@ -1514,6 +1558,15 @@ int main(int argc, char** argv) {
 
     // test_lt(argv[1]);
 
-    test_pt(argv[1]);
+    // test_pt(argv[1]);
+
+    // 根据参数选择不同的功能
+    if (strcmp(argv[1], "scalability") == 0) {
+        scalability_benchmarks(argv[2]);
+    }else{
+        printf("unknown command: %s\n", argv[1]);
+        printf("Usage: ./clmpthash_test scalability <config>\n");
+        return -1;
+    }
     return 0;
 }

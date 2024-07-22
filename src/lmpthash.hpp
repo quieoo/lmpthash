@@ -14,6 +14,7 @@
 #include "include/clmpthash.h"
 
 const int page_size = 4096;
+const int page_per_block = 64;
 typedef pthash::single_phf<pthash::murmurhash2_64, pthash::compact, false> pthash_type;
 
 #define ANSI_CURSOR_UP(n)    "\033[" #n "A"
@@ -883,7 +884,7 @@ struct LMPTHashBuilder{
                 uint64_t pilot_size=pthash_map[i].pilot_bytes();
 
                 uint64_t total_size=table_size+pilot_size+sizeof(uint64_t);
-                printf("seg-%ld, table_size: %f MB, pilot_size: %ld, total_size: %ld\n", i, (double)table_size/1024/1024, pilot_size, total_size);
+                // printf("seg-%ld, table_size: %f MB, pilot_size: %ld, total_size: %ld\n", i, (double)table_size/1024/1024, pilot_size, total_size);
                 uint8_t* raw_table;
                 try{
                     raw_table = new uint8_t[total_size];
@@ -956,6 +957,95 @@ struct LMPTHashBuilder{
     }
 };
 
+void parse_spc(std::vector<uint64_t>&  uniq_lpn, std::vector<uint64_t>& lpns, std::string filename){
+     // hash table for unique lpn
+    std::unordered_set<uint64_t> ht;
+
+    // open file with name "filename", and read by lines
+    std::ifstream file(filename);
+    std::string line;
+    uint64_t timestamp, offset, size, t0;
+    char trace_name[100];
+    char op[100];
+    int trace_id;
+    uint64_t lpn;
+    while (std::getline(file, line)) {
+        /*
+        扫描文件，格式为：0,227695,3072,r,0.000000
+        字段 1：线程或进程ID（0, 1, 2, 3, ...）
+        字段 2：I/O操作的起始地址（块地址或字节偏移）
+        字段 3：I/O操作的大小（以字节为单位）
+        字段 4：I/O操作类型（r 表示读操作，w 表示写操作）
+        字段 5：时间戳（以秒为单位，表示自开始执行I/O以来的时间）
+        */
+
+        sscanf(line.c_str(), "%d,%ld,%ld,%s,%f", &trace_id, &offset, &size, op, &timestamp);
+        // 将offset和size转换为lpn
+        lpn=offset;
+        int pn=(size+page_size-1)/page_size;
+        for(int i=0;i<pn;i++){
+            lpn=lpn+i;
+            lpns.push_back(lpn);
+            ht.insert(lpn);
+        }
+    }
+
+    // get unique lpn
+    for (auto it = ht.begin(); it != ht.end(); it++) {
+        uniq_lpn.push_back(*it);
+    }
+    // sort uniq_lpn
+    std::sort(uniq_lpn.begin(), uniq_lpn.end());
+    file.close();
+    return;   
+}
+
+void parse_trace(std::vector<uint64_t>&  uniq_lpn, std::vector<uint64_t>& lpns, std::string filename){
+     // hash table for unique lpn
+    std::unordered_set<uint64_t> ht;
+
+    // open file with name "filename", and read by lines
+    std::ifstream file(filename);
+    std::string line;
+
+    uint64_t block_id;
+    uint64_t offset;
+    uint64_t size;
+    uint64_t op_time;
+    uint64_t op_name;
+    uint64_t user_namespace;
+    uint64_t user_name;
+    uint64_t rs_shard_id;
+    uint64_t op_count;
+    uint64_t host_name;
+    
+    while (std::getline(file, line)) {
+        /*
+        扫描文件，格式为：block_id io_offset io_size op_time op_name user_namespace user_name rs_shard_id op_count host_name
+        */
+        sscanf(line.c_str(), "%ld %ld %ld %ld %ld %ld %ld %ld %ld %ld\n", &block_id, &offset, &size, &op_time, &op_name, &user_namespace, &user_name, &rs_shard_id, &op_count, &host_name);
+
+        // 将block_id转换为lpn
+        uint64_t lpn=block_id*page_per_block+(offset/page_size);
+
+        int pn=(size+page_size-1)/page_size;
+        for(int i=0;i<pn;i++){
+            lpn=lpn+i;
+            lpns.push_back(lpn);
+            ht.insert(lpn);
+        }
+    }
+
+    // get unique lpn
+    for (auto it = ht.begin(); it != ht.end(); it++) {
+        uniq_lpn.push_back(*it);
+    }
+    // sort uniq_lpn
+    std::sort(uniq_lpn.begin(), uniq_lpn.end());
+    file.close();
+    return;   
+}
+
 
 void parse_MSR_Cambridge(std::vector<uint64_t>&  uniq_lpn, std::vector<uint64_t>& lpns, std::string filename){
     // hash table for unique lpn
@@ -984,6 +1074,10 @@ void parse_MSR_Cambridge(std::vector<uint64_t>&  uniq_lpn, std::vector<uint64_t>
     }
     // sort uniq_lpn
     std::sort(uniq_lpn.begin(), uniq_lpn.end());
+
+    // printf("unique lpn min: %ld, max: %ld\n", uniq_lpn[0], uniq_lpn[uniq_lpn.size()-1]);
+
+
     file.close();
     return;   
 }
