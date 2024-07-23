@@ -423,7 +423,9 @@ struct LMPTHashBuilder{
         SegmentResult result;
         result.index = index;
         
-        if(seg.first_key.size() == 1) {
+        // breakdown: lpht
+        if(0){
+        // if(seg.first_key.size() == 1) {
             // accurate segment
             result.slope = 0;
         } else {
