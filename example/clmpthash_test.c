@@ -1566,6 +1566,9 @@ void scalability_benchmarks(char* config){
     build_index_with_scale(lvas, pas, num_lva, &cfg, 16);
 }
 
+
+void filter_accurate_segment_keys()
+
 int main(int argc, char** argv) {
     // test_host_side_clmpthash(argv[1]);
     // test_host_side_compacted(argv[1]);

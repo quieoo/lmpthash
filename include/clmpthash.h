@@ -74,7 +74,7 @@ void clmpthash_clean_bufs(clmpthash_lva* lvas, clmpthash_physical_addr* pas, clm
 void* clmpthash_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_t num, clmpthash_config* cfg);
 int clmpthash_get_pa(clmpthash_lva lva, void* index, clmpthash_physical_addr* pa);
 int clmpthash_clean_index(void* index);
-
+void* clmpthash_filter_accurate(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_t num, clmpthash_config* cfg, clmpthash_lva* querys, uint64_t num_querys);
 
 void* clmpthash_offload_index(void* index);
 int clmpthash_clean_offloaded_index(void* inner_index);

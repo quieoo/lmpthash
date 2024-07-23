@@ -82,6 +82,59 @@ void clmpthash_clean_bufs(clmpthash_lva* lvas, clmpthash_physical_addr* pas, clm
     delete[] querys;
 }
 
+void* clmpthash_filter_accurate(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_t num, clmpthash_config* cfg, clmpthash_lva* querys, uint64_t num_querys){
+    lmpthash_config config;
+    config.alpha=cfg->alpha;
+    config.beta=cfg->beta;
+    config.gamma=cfg->gamma;
+    config.P=cfg->P;
+    config.hashed_num_bucket_c=cfg->hashed_num_bucket_c;
+    config.table_size_alpha=cfg->table_size_alpha;
+    config.max_bucket_size=cfg->max_bucket_size;
+    config.pilot_search_threshold=cfg->pilot_search_threshold;
+    config.dynamic_alpha=cfg->dynamic_alpha;
+    config.alpha_limits=cfg->alpha_limits;
+    config.left_epsilon=cfg->left_epsilon;
+    config.right_epsilon=cfg->right_epsilon;
+
+    LMPTHashBuilder<clmpthash_lva, clmpthash_physical_addr>* builder = new LMPTHashBuilder<clmpthash_lva, clmpthash_physical_addr>(config);
+    std::vector<clmpthash_lva> keys(lvas, lvas+num);
+    std::vector<clmpthash_physical_addr> values(pas, pas+num);
+
+    builder->Segmenting(keys);
+    builder->Learning();
+    builder->Multi_Bucketing();
+    if(builder->Tabling(keys, values)){
+        printf("Build index table failed\n");
+        return NULL;
+    }
+
+    std::vector<clmpthash_lva> ret;
+    // 遍历querys，将属于accurate segments中的querys过滤掉
+    for(uint64_t i=0;i<num_querys;i++){
+        int not_in_accurate=1;
+        for(uint32_t j=0;j<builder->ms_merger.segments.size();j++){
+            if(builder->ms_merger.segments[j].first_key.size()==1){
+                if(builder->ms_merger.segments[j].first_key[0]<=querys[i] && querys[i]<=builder->ms_merger.segments[j].last_key[0]){
+                    not_in_accurate=0;
+                    break;   
+                }
+            }
+        }
+
+        if(not_in_accurate){
+            ret.push_back(querys[i]);
+        }
+    }
+
+    clmpthash_lva* rets=new clmpthash_lva[ret.size()];
+    for(uint64_t i=0;i<ret.size();i++){
+        rets[i]=ret[i];
+    }
+
+    return rets;
+}
+
 void* clmpthash_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_t num, clmpthash_config* cfg){
     lmpthash_config config;
     config.alpha=cfg->alpha;
