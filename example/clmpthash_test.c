@@ -1567,8 +1567,6 @@ void scalability_benchmarks(char* config){
 }
 
 
-void filter_accurate_segment_keys()
-
 int main(int argc, char** argv) {
     // test_host_side_clmpthash(argv[1]);
     // test_host_side_compacted(argv[1]);
@@ -1583,6 +1581,8 @@ int main(int argc, char** argv) {
     // 根据参数选择不同的功能
     if (strcmp(argv[1], "scalability") == 0) {
         scalability_benchmarks(argv[2]);
+    }else if(strcmp(argv[1], "dlmpht") == 0){
+        test_host_side_compacted_batch_without_align(argv[2]);
     }else{
         printf("unknown command: %s\n", argv[1]);
         printf("Usage: ./clmpthash_test scalability <config>\n");

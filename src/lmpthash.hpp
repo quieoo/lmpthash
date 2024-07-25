@@ -423,9 +423,9 @@ struct LMPTHashBuilder{
         SegmentResult result;
         result.index = index;
         
-        // breakdown: lpht
-        if(0){
-        // if(seg.first_key.size() == 1) {
+        // // breakdown: lpht
+        // if(0){
+        if(seg.first_key.size() == 1) {
             // accurate segment
             result.slope = 0;
         } else {
@@ -436,26 +436,26 @@ struct LMPTHashBuilder{
                 }
             }
             
-            // breakdown: lmpht-cache
-            pthash_type f;
-                // printf("seg_%d build_in_internal_memory hash\n", index);
-            config.LinearMapping = false;
-            auto ret = f.build_in_internal_memory(keys.begin(), keys.size(), config);
-            if(ret.searching_seconds == -1) {
-                printf("build_in_internal_memory hashed failed\n");
-            }
-
-            // config.LinearMapping = true;
+            // // breakdown: lmpht-cache
             // pthash_type f;
+            //     // printf("seg_%d build_in_internal_memory hash\n", index);
+            // config.LinearMapping = false;
             // auto ret = f.build_in_internal_memory(keys.begin(), keys.size(), config);
             // if(ret.searching_seconds == -1) {
-            //     // printf("seg_%d build_in_internal_memory hash\n", index);
-            //     config.LinearMapping = false;
-            //     ret = f.build_in_internal_memory(keys.begin(), keys.size(), config);
-            //     if(ret.searching_seconds == -1) {
-            //         printf("build_in_internal_memory hashed failed\n");
-            //     }
+            //     printf("build_in_internal_memory hashed failed\n");
             // }
+
+            config.LinearMapping = true;
+            pthash_type f;
+            auto ret = f.build_in_internal_memory(keys.begin(), keys.size(), config);
+            if(ret.searching_seconds == -1) {
+                // printf("seg_%d build_in_internal_memory hash\n", index);
+                config.LinearMapping = false;
+                ret = f.build_in_internal_memory(keys.begin(), keys.size(), config);
+                if(ret.searching_seconds == -1) {
+                    printf("build_in_internal_memory hashed failed\n");
+                }
+            }
             
             result.slope = f.get_slope();
             result.pthashMap = f;
