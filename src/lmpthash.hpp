@@ -913,37 +913,47 @@ struct LMPTHashBuilder{
 
                 uint64_t pthash_meta=0;
                 // fisrt 2 bits for seg_type
-                pthash_meta=lmpt_segments[i].seg_type;
-                pthash_meta<<=62;
-                // next 30 bits of meta is slope
-                if(lmpt_segments[i].slope > 1<<30){
-                    printf("Error while Compacting: lmpt_segments[i].slope > 1<<30\n");
+                pthash_meta = (uint64_t)(lmpt_segments[i].seg_type) << 62;
+
+                // next 8 bits is left for segement version
+                uint64_t version=0;
+                pthash_meta |= (version & 0xff) << 54;
+
+                // next 22 bits of meta is slope
+                if(lmpt_segments[i].slope > (1<<22)){
+                    printf("Error while Compacting: lmpt_segments[i].slope > 1<<22\n");
                     return -1;
                 }
-                pthash_meta|=(uint64_t)(lmpt_segments[i].slope)<<32;
+                pthash_meta |= ((uint64_t)(lmpt_segments[i].slope) & 0x3fffff) << 32;
+
                 // next 8 bits of meta is width of pilot
                 uint32_t pilot_width=pthash_map[i].get_pilot_width();
                 if(pilot_width > 255){
                     printf("Error while Compacting: pilot_width > 255\n");
                     return -1;
                 }
-                pthash_meta|=(uint64_t)(pilot_width<<24) & 0xffffffff;
+                pthash_meta |= ((uint64_t)pilot_width & 0xff) << 24;
                 // next 24 bits of meta table_size
                 uint32_t table_size_value=pthash_map[i].table_size();
                 if(table_size_value > 16777215){
                     printf("Error while Compacting: table_size > 16777215\n");
                     return -1;
                 }
-                pthash_meta|=(uint64_t)table_size_value & 0xffffffff;
-
+                pthash_meta |= (uint64_t)table_size_value & 0xffffff;
                 // check if values in pthash_meta is right
                 {
-                    uint8_t _seg_type=pthash_meta>>62;
-                    uint32_t _slope=(pthash_meta>>32)&0x3fffffff;
-                    uint32_t _pilot_width=(pthash_meta&0xff000000)>>24;
-                    uint32_t _table_size=pthash_meta&0xffffff;
+                    uint8_t _seg_type = (pthash_meta >> 62) & 0x03; // Only 2 bits
+                    uint64_t _version = (pthash_meta >> 54) & 0xff; // Only 8 bits
+                    uint32_t _slope = (pthash_meta >> 32) & 0x3fffff; // Only 22 bits
+                    uint32_t _pilot_width = (pthash_meta >> 24) & 0xff; // Only 8 bits
+                    uint32_t _table_size = (pthash_meta) & 0xffffff; // Only 24 bits
+
                     if(_seg_type!=lmpt_segments[i].seg_type){
                         printf("Error while Compacting: _seg_type!=lmpt_segments[i].seg_type\n");
+                        return -1;
+                    }
+                    if(_version!=0){
+                        printf("Error while Compacting: _version!=0\n");
                         return -1;
                     }
                     if(_slope!=lmpt_segments[i].slope){

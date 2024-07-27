@@ -4,6 +4,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <stdatomic.h>
 
 #define PGM_SUB_EPS(x, epsilon) ((x) <= (epsilon) ? 0 : ((x) - (epsilon)))
 
@@ -122,13 +123,16 @@ typedef struct bucket_cache_entry {
     uint64_t key;
     uint64_t value;
 } bucket_cache_entry;
-
+#define CACHE_SIZE (1024 * 1024 / 16)
+#define CACHE_BUCKET_SIZE 4
 typedef struct bucket_cache {
     uint32_t table_size;
     bucket_cache_entry* data;
 
     uint64_t total_access;
     uint64_t hit_count;
+
+    atomic_int cnt[CACHE_SIZE/CACHE_BUCKET_SIZE];   // one counter for each four cache entry
 } bucket_cache;
 
 bucket_cache* bucket_cache_init(uint32_t table_size) {
@@ -136,49 +140,53 @@ bucket_cache* bucket_cache_init(uint32_t table_size) {
     memset(bc, 0, sizeof(bucket_cache));
     bc->table_size = table_size;
     bc->data = malloc(table_size * sizeof(bucket_cache_entry));
-    memset(bc->data, 0xFF,
-           table_size * sizeof(bucket_cache_entry));  // cache initialized to 0xFF, in case of key=0
+    memset(bc->data, 0xFF, table_size * sizeof(bucket_cache_entry));  // cache initialized to 0xFF, in case of key=0
+    for(int i=0;i<CACHE_SIZE/CACHE_BUCKET_SIZE;i++){
+        atomic_init(&bc->cnt[i], 0);
+    }
     return bc;
 }
 
-uint64_t bucket_cache_get(bucket_cache* bc, uint32_t seg_id, uint32_t compressed_blk) {
-    uint64_t key = ((uint64_t)seg_id << 32) + (uint64_t)compressed_blk;
-    uint32_t idx = MurmurHash2_64(&key, sizeof(key), 0) % (bc->table_size);
-    bc->total_access = bc->total_access + 1;
-    if (bc->data[idx].key == key) {
-        bc->hit_count = bc->hit_count + 1;
-        return bc->data[idx].value;
-    } else {
+
+uint64_t bucket_cache_get(bucket_cache* bc, uint64_t seg_first_key, uint32_t compressed_blk, uint8_t version) {
+    if (compressed_blk >= (1 << 24)) {
+        printf("error compressed_blk too large: %d\n", compressed_blk);
         return UINT64_MAX;
     }
-}
 
-uint64_t bucket_cache_get_v2(bucket_cache* bc, uint64_t seg_first_key, uint32_t compressed_blk) {
-    uint64_t key = (seg_first_key << 32) + (uint64_t)compressed_blk;
-    uint32_t idx = MurmurHash2_64(&key, sizeof(key), 0) % (bc->table_size);
-    bc->total_access = bc->total_access + 1;
-    if (bc->data[idx].key == key) {
-        bc->hit_count = bc->hit_count + 1;
-        return bc->data[idx].value;
-    } else {
-        return UINT64_MAX;
+    uint64_t key = (((uint64_t)seg_first_key << 24) & 0x00ffffffff000000) | (((uint64_t)compressed_blk) & 0xffffff);
+    uint32_t idx = MurmurHash2_64(&key, sizeof(key), 0) % (CACHE_SIZE / CACHE_BUCKET_SIZE);
+
+    bc->total_access++;
+
+    for (int i = 0; i < CACHE_BUCKET_SIZE; i++) {
+        bucket_cache_entry enty = bc->data[CACHE_BUCKET_SIZE * idx + i];
+        uint64_t key2 = enty.key >> 8;
+        uint64_t version2 = enty.key & 0xff;
+
+        if (key2 == key && version2 == version) {
+            bc->hit_count++;
+            return enty.value;
+        }else if(key2==key) {
+            // printf("version mismatch: %d, %d\n", version, version2);
+        }
     }
+
+    return UINT64_MAX;
 }
 
-void bucket_cache_put(bucket_cache* bc, uint32_t seg_id, uint32_t compressed_blk, uint64_t value) {
-    uint64_t key = ((uint64_t)seg_id << 32) + (uint64_t)compressed_blk;
-    uint32_t idx = MurmurHash2_64(&key, sizeof(key), 0) % (bc->table_size);
-    bc->data[idx].key = key;
-    bc->data[idx].value = value;
+void bucket_cache_put(bucket_cache* bc, uint32_t seg_id, uint32_t compressed_blk, uint64_t value, uint8_t version) {
+    uint64_t key = (((uint64_t)seg_id << 24) & 0xffffffff000000) | (((uint64_t)compressed_blk) & 0xffffff);
+    uint32_t idx = MurmurHash2_64(&key, sizeof(key), 0) % (CACHE_SIZE / CACHE_BUCKET_SIZE);
+    int s_idx = atomic_fetch_add(&bc->cnt[idx], 1) % CACHE_BUCKET_SIZE;
+    // printf("idx: %u, s_idx: %u\n", idx, s_idx);
+
+    bucket_cache_entry enty;
+    enty.key = ((key << 8) & 0xffffffffffffff00) | ((uint64_t)version & 0xff);
+    enty.value = value;
+    bc->data[idx * CACHE_BUCKET_SIZE + s_idx] = enty;
 }
 
-void bucket_cache_put_v2(bucket_cache* bc, uint64_t seg_first_key, uint32_t compressed_blk,
-                         uint64_t value) {
-    uint64_t key = (seg_first_key << 32) + (uint64_t)compressed_blk;
-    uint32_t idx = MurmurHash2_64(&key, sizeof(key), 0) % (bc->table_size);
-    bc->data[idx].key = key;
-    bc->data[idx].value = value;
-}
 
 void bucket_cache_clean(bucket_cache* bc) {
     free(bc->data);
@@ -222,6 +230,8 @@ spram global_spram[64];
 // #define lmpthash_htl_first_key_spram4 ((uint8_t*)(&(global_spram[48])))
 
 #define lmpthash_cache_segment_spram ((uint8_t*)(&(global_spram[50])))
+#define lmphash_cache_segment_get_spram ((uint8_t*)(&(global_spram[52])))
+
 #define l1_segs(id) ((clmpthash_pgm_segment*)(&(global_spram[34 + ((id) << 1)])))
 #define htl_fks(id) ((uint64_t*)(&(global_spram[42 + ((id) & ~1)])) + ((id) & 1))
 
@@ -603,83 +613,75 @@ int test_lt(char* config) {
     printf("dma size: %lu, average dma num: %f\n", average_dma_size, (double)dma_num/num_querys);
 }
 
-int test_host_side_compacted_v2(char* config) {
-    clmpthash_config cfg;
-    clmpthash_lva* lvas;
-    clmpthash_physical_addr* pas;
-    clmpthash_lva* querys;
-    uint64_t num_lva;
+
+#define t_lmpthash_tmp_spram(t_spram) ((uint8_t*)(&((t_spram)[30])))
+#define t_lmpthash_lindex_meta_spram(t_spram) ((uint8_t*)(&((t_spram)[32])))
+#define t_lmpthash_cache_segment_spram(t_spram) ((uint8_t*)(&((t_spram)[50])))
+#define t_lmpthash_cache_segment_get_spram(t_spram) ((uint8_t*)(&((t_spram)[52])))
+#define t_l1_segs(t_spram, id) ((clmpthash_pgm_segment*)(&((t_spram)[34 + ((id) << 1)])))
+#define t_htl_fks(t_spram, id) ((uint64_t*)(&((t_spram)[42 + ((id) & ~1)])) + ((id) & 1))
+
+
+typedef struct{
     uint64_t num_querys;
-    clmpthash_parse_configuration(config, &cfg, &lvas, &pas, &num_lva, &querys, &num_querys);
+    clmpthash_lva* querys;
+    int cache_last_htl_segment;
+    void* inner_index;
+    bucket_cache* bc;
+    spram* thread_spram;
+} dlmpht_thread_arg;
 
-    void* index = clmpthash_build_index(lvas, pas, num_lva, &cfg);
-    if (index == NULL) {
-        printf("error building index\n");
-        return -1;
-    }
-
-    void* inner_index = clmpthash_offload_index(index);
-    if (inner_index == NULL) {
-        printf("error offloading index\n");
-        return -1;
-    }
-
-    // nof_dpu_offload_index(inner_index);
-    // return;
-
-    printf("query with compacted inner index, for DPU to use\n");
-    //
-    uint16_t* p16;
-    clmpthash_physical_addr pa1;
-    bucket_cache* bc = bucket_cache_init(1024 * 1024 / 16);
-
-    uint64_t total_ls_cnt = 0;
-    uint64_t sm_cnt[4] = {0};
-    uint64_t total_dma_cnt=0;
-    uint64_t bucket_dma_cnt=0;
-
-    uint8_t cache_last_htl_segment=1;
-    uint8_t cache_last_htl_segment_hit=0;
-    if(cache_last_htl_segment){
-        printf("Enabled cache last htl segment\n");
-    }
-    // num_querys = 10;
+void dlmpht_query_func(void* arg){
+    dlmpht_thread_arg* _arg=(dlmpht_thread_arg*)arg;
+    uint64_t num_querys=_arg->num_querys;
+    clmpthash_lva* querys=_arg->querys;
+    int cache_last_htl_segment=_arg->cache_last_htl_segment;
+    cache_last_htl_segment=0;
+    void* inner_index=_arg->inner_index;
+    bucket_cache* bc=_arg->bc;
 
     // initialize Lindex_meta and level0_segment
-    load_16B_with_tmp_spram(lmpthash_lindex_meta_spram, inner_index, 1);
-    Lindex_metadata* lmd_ = (Lindex_metadata*)lmpthash_lindex_meta_spram;
+    load_16B_with_tmp_spram(t_lmpthash_lindex_meta_spram(_arg->thread_spram), inner_index, 1);
+    Lindex_metadata* lmd_ = (Lindex_metadata*)t_lmpthash_lindex_meta_spram(_arg->thread_spram);
     uint16_t sidx_level0 = lmd_->level_offsets[lmd_->num_levels - 1];
-    load_16B_with_tmp_spram(lmpthash_lindex_meta_spram+16, inner_index, sidx_level0);
-    load_16B_with_tmp_spram(lmpthash_lindex_meta_spram+32, inner_index, sidx_level0+1);
-
+    load_16B_with_tmp_spram(t_lmpthash_lindex_meta_spram(_arg->thread_spram)+16, inner_index, sidx_level0);
+    load_16B_with_tmp_spram(t_lmpthash_lindex_meta_spram(_arg->thread_spram)+32, inner_index, sidx_level0+1);
+    
     uint8_t i;
+    clmpthash_physical_addr pa1;
+    uint64_t cache_hit=0;
+    uint64_t cache_total=0;
     // num_querys=1;
+
     for (uint64_t q = 0; q < num_querys; ++q) {
         // printf("query %lu\n", q);
         if (q % 10000 == 0) {
-            printf("\r    %lu / %lu\n", q, num_querys);
-            printf("\033[1A");
+            // printf("\r    %lu / %lu\n", q, num_querys);
+            // printf("\033[1A");
+
+            // printf("    cache hit ratio: %f\n",(double)cache_hit/cache_total);
         }
         clmpthash_lva lva = querys[q];
 
         // query pgm index
 
         // cached last htl segment
-        clmpthash_htl_segment* htl_seg = (clmpthash_htl_segment*)lmpthash_cache_segment_spram;
+        clmpthash_htl_segment* htl_seg = (clmpthash_htl_segment*)t_lmpthash_cache_segment_get_spram(_arg->thread_spram);
         uint64_t s_first_key;
-        cache_last_htl_segment_hit=0;
+        int cache_last_htl_segment_hit=0;
         // printf("1: lva %lx\n", lva);
         if(cache_last_htl_segment){
             // cached_first_key <= lva
-            uint64_t* cached_firsy_key=(uint64_t*)(lmpthash_cache_segment_spram+16);
+            uint64_t* cached_firsy_key=(uint64_t*)(t_lmpthash_cache_segment_spram(_arg->thread_spram));
             if(*cached_firsy_key <= lva){
                 // printf("2: cached_firsy_key %lx\n", *cached_firsy_key);
-            
+                // printf("fk: %lx, offset: %u, seg_offset: %u\n", cached_firsy_key[0], cached_firsy_key[1], cached_firsy_key[2]);
                 // cached_next_key > lva
                 // uint64_t* cached_next_key= htl_fks(cached_firsy_key[1]);
-                if(*(htl_fks(cached_firsy_key[1])) > lva){
-                    // printf("3: cached_next_key %lx\n", *(htl_fks(cached_firsy_key[1])));
+                if(*(t_htl_fks(_arg->thread_spram, cached_firsy_key[1])) > lva){
+                    // printf("3: cached_next_key %lx\n", *(t_htl_fks(_arg->thread_spram,cached_firsy_key[1])));
                     s_first_key=*cached_firsy_key;
+                    memcpy(htl_seg, inner_index + cached_firsy_key[2], 16);
                     cache_last_htl_segment_hit=1;
                 }
             }
@@ -687,14 +689,14 @@ int test_host_side_compacted_v2(char* config) {
 
         if(!cache_last_htl_segment || !cache_last_htl_segment_hit){
             // get Lindex_metadata
-            Lindex_metadata* lmd = (Lindex_metadata*)lmpthash_lindex_meta_spram;
+            Lindex_metadata* lmd = (Lindex_metadata*)t_lmpthash_lindex_meta_spram(_arg->thread_spram);
             uint16_t l = lmd->num_levels;
             uint32_t epsilon = lmd->epsilon+1;
             // printf("l: %u, epsilon: %u\n", l, epsilon);
             uint16_t* level_offsets = lmd->level_offsets;
             // uint32_t num_htl_segment=level_offsets[l+2]-level_offsets[l+1];
-            clmpthash_pgm_segment* level0_segments = (clmpthash_pgm_segment*)(lmpthash_lindex_meta_spram+16);
-
+            clmpthash_pgm_segment* level0_segments = (clmpthash_pgm_segment*)(t_lmpthash_lindex_meta_spram(_arg->thread_spram)+16);
+            
             // predict with cached level[l] segment
             int64_t pos =(int64_t)(level0_segments->slope) * (lva - level0_segments->key) / ((uint32_t)1 << 31) +level0_segments->intercept;
             // printf("key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva,level0_segments->key, level0_segments->slope, level0_segments->intercept, pos);
@@ -722,55 +724,51 @@ int test_host_side_compacted_v2(char* config) {
                     // for(;i<4;i++)
                     //     memcpy(l1_segs(i), inner_index + (s_idx2+1+i)*16, 16);
                     
-                    memcpy(l1_segs(0), inner_index+(++s_idx2)*16, 16);
-                    memcpy(l1_segs(1), inner_index+(++s_idx2)*16, 16);
-                    memcpy(l1_segs(2), inner_index+(++s_idx2)*16, 16);
-                    memcpy(l1_segs(3), inner_index+(++s_idx2)*16, 16);
+                    memcpy(t_l1_segs(_arg->thread_spram,0), inner_index+(++s_idx2)*16, 16);
+                    memcpy(t_l1_segs(_arg->thread_spram,1), inner_index+(++s_idx2)*16, 16);
+                    memcpy(t_l1_segs(_arg->thread_spram,2), inner_index+(++s_idx2)*16, 16);
+                    memcpy(t_l1_segs(_arg->thread_spram,3), inner_index+(++s_idx2)*16, 16);
                     // for(int seg = 0; seg < 4; seg++){
                     //     printf("l1_segs[%d] key: %lu, slope: %u, intercept: %u\n", seg, l1_segs(seg)->key, l1_segs(seg)->slope, l1_segs(seg)->intercept);
                     // }
-                    total_ls_cnt++;
-                    sm_cnt[0]++;
 
                     // l1_segs_0_outstand()
-                    if(l1_segs(0)->key > lva){
+                    if(t_l1_segs(_arg->thread_spram,0)->key > lva){
                         if(s_idx1+4==s_idx2){
-                            memcpy(l1_segs(3)+1, inner_index + (s_idx1) * 16, 16);    
-                            total_ls_cnt++;
-                            sm_cnt[1]++;
+                            memcpy(t_l1_segs(_arg->thread_spram,3)+1, inner_index + (s_idx1) * 16, 16);    
                         }
-                        pos = (int64_t)(l1_segs(3)[1].slope) * (lva - l1_segs(3)[1].key) / ((uint32_t)1 << 31) +  l1_segs(3)[1].intercept;
+                        pos = (int64_t)(t_l1_segs(_arg->thread_spram,3)[1].slope) * (lva - t_l1_segs(_arg->thread_spram,3)[1].key) / ((uint32_t)1 << 31) +  t_l1_segs(_arg->thread_spram,3)[1].intercept;
                         // printf("[i==0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, l1_segs(3)[1].key, l1_segs(3)[1].slope, l1_segs(3)[1].intercept, pos);
                         if (pos < 0) pos = 0;
-                        if (pos > l1_segs(0)[0].intercept)pos = l1_segs(0)[0].intercept;
+                        if (pos > t_l1_segs(_arg->thread_spram,0)[0].intercept)pos = t_l1_segs(_arg->thread_spram,0)[0].intercept;
                         break;
                     }
                     //l1_segs_1_outstand()
-                    if(l1_segs(1)->key > lva){
-                        pos = (int64_t)(l1_segs(0)[0].slope) * (lva - l1_segs(0)[0].key) / ((uint32_t)1 << 31) +  l1_segs(0)[0].intercept;
+                    if(t_l1_segs(_arg->thread_spram,1)->key > lva){
+                        pos = (int64_t)(t_l1_segs(_arg->thread_spram,0)[0].slope) * (lva - t_l1_segs(_arg->thread_spram,0)[0].key) / ((uint32_t)1 << 31) +  t_l1_segs(_arg->thread_spram,0)[0].intercept;
                         // printf("[i==1] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, l1_segs(0)[0].key, l1_segs(0)[0].slope, l1_segs(0)[0].intercept, pos);
                         if (pos < 0) pos = 0;
-                        if (pos > l1_segs(1)[0].intercept)pos = l1_segs(1)[0].intercept;
+                        if (pos > t_l1_segs(_arg->thread_spram,1)[0].intercept)pos = t_l1_segs(_arg->thread_spram,1)[0].intercept;
                         break;
                     }
                     //l1_segs_2_outstand()
-                    if(l1_segs(2)->key > lva){
-                        pos = (int64_t)(l1_segs(1)[0].slope) * (lva - l1_segs(1)[0].key) / ((uint32_t)1 << 31) +  l1_segs(1)[0].intercept;
+                    if(t_l1_segs(_arg->thread_spram,2)->key > lva){
+                        pos = (int64_t)(t_l1_segs(_arg->thread_spram,1)[0].slope) * (lva - t_l1_segs(_arg->thread_spram,1)[0].key) / ((uint32_t)1 << 31) +  t_l1_segs(_arg->thread_spram,1)[0].intercept;
                         // printf("[i==2] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, l1_segs(1)[0].key, l1_segs(1)[0].slope, l1_segs(1)[0].intercept, pos);
                         if (pos < 0) pos = 0;
-                        if (pos > l1_segs(2)[0].intercept)pos = l1_segs(2)[0].intercept;
+                        if (pos > t_l1_segs(_arg->thread_spram,2)[0].intercept)pos = t_l1_segs(_arg->thread_spram,2)[0].intercept;
                         break;
                     }
                     //l1_segs_1_outstand()
-                    if(l1_segs(3)->key > lva){
-                        pos = (int64_t)(l1_segs(2)[0].slope) * (lva - l1_segs(2)[0].key) / ((uint32_t)1 << 31) +  l1_segs(2)[0].intercept;
+                    if(t_l1_segs(_arg->thread_spram,3)->key > lva){
+                        pos = (int64_t)(t_l1_segs(_arg->thread_spram,2)[0].slope) * (lva - t_l1_segs(_arg->thread_spram,2)[0].key) / ((uint32_t)1 << 31) +  t_l1_segs(_arg->thread_spram,2)[0].intercept;
                         // printf("[i==3] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, l1_segs(2)[0].key, l1_segs(2)[0].slope, l1_segs(2)[0].intercept, pos);
                         if (pos < 0) pos = 0;
-                        if (pos > l1_segs(3)[0].intercept)pos = l1_segs(3)[0].intercept;
+                        if (pos > t_l1_segs(_arg->thread_spram,3)[0].intercept)pos = t_l1_segs(_arg->thread_spram,3)[0].intercept;
                         break;
                     }
                     // backup current l1_segs[3][0] to l1_segs[3][1]
-                    l1_segs(3)[1]= l1_segs(3)[0];
+                    t_l1_segs(_arg->thread_spram,3)[1]= t_l1_segs(_arg->thread_spram,3)[0];
                 }
                 l=l-1;
             }
@@ -788,84 +786,82 @@ int test_host_side_compacted_v2(char* config) {
                 s_idx2 = level_offsets[lmd->num_levels] + s_idx1 / 2 + 1;
             }
             do{
-                memcpy(htl_fks(0), inner_index+(s_idx2++)*16, 16);
-                memcpy(htl_fks(2), inner_index+(s_idx2++)*16, 16);
-                memcpy(htl_fks(4), inner_index+(s_idx2++)*16, 16);
-                memcpy(htl_fks(6), inner_index+(s_idx2++)*16, 16);
-                total_ls_cnt++;
-                sm_cnt[2]++;
+                memcpy(t_htl_fks(_arg->thread_spram,0), inner_index+(s_idx2++)*16, 16);
+                memcpy(t_htl_fks(_arg->thread_spram,2), inner_index+(s_idx2++)*16, 16);
+                memcpy(t_htl_fks(_arg->thread_spram,4), inner_index+(s_idx2++)*16, 16);
+                memcpy(t_htl_fks(_arg->thread_spram,6), inner_index+(s_idx2++)*16, 16);
                 // for(int k=0;k<8;k++) {
                 //     printf("first_key: %lu\n", htl_fks(k)[0]);
                 // }
                 i=0;
                 // htl_fks_0_outstand()
-                if(htl_fks(0)[0]>lva) break;
+                if(t_htl_fks(_arg->thread_spram,0)[0]>lva) break;
                 ++i;
 
-                if(htl_fks(1)[0]>lva) break;
+                if(t_htl_fks(_arg->thread_spram,1)[0]>lva) break;
                 ++i;
 
                 // htl_fks_1_outstand()
-                if(htl_fks(2)[0]>lva) break;
+                if(t_htl_fks(_arg->thread_spram,2)[0]>lva) break;
                 ++i;
 
-                if(htl_fks(3)[0]>lva) break;
+                if(t_htl_fks(_arg->thread_spram,3)[0]>lva) break;
                 ++i;
 
                 // htl_fks_2_outstand()
-                if(htl_fks(4)[0]>lva) break;
+                if(t_htl_fks(_arg->thread_spram,4)[0]>lva) break;
                 ++i;
 
-                if(htl_fks(5)[0]>lva) break;
+                if(t_htl_fks(_arg->thread_spram,5)[0]>lva) break;
                 ++i;
 
                 // htl_fks_3_outstand()
-                if(htl_fks(6)[0]>lva) break;
+                if(t_htl_fks(_arg->thread_spram,6)[0]>lva) break;
                 ++i;
 
-                if(htl_fks(7)[0]>lva) break;
+                if(t_htl_fks(_arg->thread_spram,7)[0]>lva) break;
                 ++i;
 
                 // can not find next_first_key > lva
-                htl_fks(7)[1]= htl_fks(7)[0];   // backup current first_key
+                t_htl_fks(_arg->thread_spram,7)[1]= t_htl_fks(_arg->thread_spram,7)[0];   // backup current first_key
                 s_idx1+=8;
             }while(1);
             // load htl segment
             if(i==0){
                 if(s_idx2 == (level_offsets[lmd->num_levels] + s_idx1 / 2 + 1)+4){
                     // first round found the right first_key on htl_fks(0)
-                    memcpy(htl_fks(6), inner_index+(s_idx2-5)*16, 16);
-                    htl_fks(7)[1]= htl_fks(7)[0];
+                    memcpy(t_htl_fks(_arg->thread_spram,6), inner_index+(s_idx2-5)*16, 16);
+                    t_htl_fks(_arg->thread_spram,7)[1]= t_htl_fks(_arg->thread_spram,7)[0];
                 }
-                s_first_key=htl_fks(7)[1];
+                s_first_key=t_htl_fks(_arg->thread_spram,7)[1];
             }else{
-                s_first_key=htl_fks(i-1)[0];
+                s_first_key=t_htl_fks(_arg->thread_spram,i-1)[0];
             }
             s_idx1+=i;
 
-            
-
             memcpy(htl_seg, inner_index + (level_offsets[lmd->num_levels + 1] + s_idx1) * 16, 16);
-            total_ls_cnt++;
-            sm_cnt[3]++;
             // save current first_key to cache
-            htl_seg[1].addr = s_first_key;
-            htl_seg[1].meta = i;
+            if(cache_last_htl_segment){
+                uint64_t* cached_p=(uint64_t*)t_lmpthash_cache_segment_spram(_arg->thread_spram);
+                cached_p[0]=s_first_key;
+                cached_p[1]=i;
+                cached_p[2]=(level_offsets[lmd->num_levels + 1] + s_idx1) * 16;
+            }
+            
             // printf("sidx_1: %x, s_first_key: %lx\n", s_idx1, s_first_key);
         }
         
-
-        uint8_t seg_type = htl_seg->meta >> 62;
+        // continue;
+        uint8_t seg_type =( htl_seg->meta >> 62)&0x3;
         // printf("seg_type: %lx\n", htl_seg->meta);
         if (seg_type == 0) {
             // printf(" accurate segment\n");
             clmpthash_physical_addr* pas = (clmpthash_physical_addr*)(htl_seg->addr + 8);
             uint64_t pos = lva - s_first_key;
             pa1 = pas[pos];
-            total_dma_cnt++;
         } else if (seg_type == 4) {
             printf(" error segment\n");
-            return -1;
+            exit(0);
         } else {
             // printf(" approximate segment\n");
             uint64_t hash = MurmurHash2_64(&lva, sizeof(clmpthash_lva), 0x123456789);
@@ -873,8 +869,9 @@ int test_host_side_compacted_v2(char* config) {
             uint32_t table_size = htl_seg->meta & 0xffffff;
             uint64_t table_addr = htl_seg->addr + 8;
             uint64_t bucket_addr = table_addr + table_size * sizeof(clmpthash_physical_addr);
-            uint32_t slope = (htl_seg->meta >> 32) & 0x3fffffff;
-            uint64_t width = (htl_seg->meta & 0xff000000) >> 24;
+            uint32_t slope = (htl_seg->meta >> 32) & 0x3fffff;
+            uint64_t width = (htl_seg->meta >> 24)&0xff;
+            uint8_t version=(htl_seg->meta >> 54)&0xff;
             if (seg_type == 1) {
                 // linear bucketing
                 blk = (lva - s_first_key) / slope;
@@ -894,21 +891,20 @@ int test_host_side_compacted_v2(char* config) {
             uint64_t p;
             uint32_t compressed_blk_id = blk >> 3;
             // uint64_t blk_value=bucket_cache_get(bc, sidx, compressed_blk_id);
-            uint64_t blk_value = bucket_cache_get_v2(bc, s_first_key, compressed_blk_id);
+            uint64_t blk_value = bucket_cache_get(bc, s_first_key, compressed_blk_id, version);
             // printf("lva: %lx, blk: %lx, blk_value: %lx, seg_type: %u\n", lva, blk, blk_value,
             // seg_type);
+            cache_total++;
             // blk_value = UINT64_MAX;
             if (blk_value != UINT64_MAX) {
                 // cache hit
+                cache_hit++;
                 p = blk_value;
             } else {
                 bucket_addr += blk >> 3;
                 p = *(uint64_t*)bucket_addr;
-                total_dma_cnt++;
-                bucket_dma_cnt++;
                 // cache miss
-                // bucket_cache_put(bc, sidx, compressed_blk_id, p);
-                bucket_cache_put(bc, s_first_key, compressed_blk_id, p);
+                bucket_cache_put(bc, s_first_key, compressed_blk_id, p, version);
             }
             p = p >> (blk & 7) & width;
             // printf("p: %lu\n", p);
@@ -919,7 +915,6 @@ int test_host_side_compacted_v2(char* config) {
             // printf("pos: %lx\n", p);
             clmpthash_physical_addr* pas = (clmpthash_physical_addr*)table_addr;
             pa1 = pas[p];
-            total_dma_cnt++;
         }
 
         // clmpthash_lva _lva = 0;
@@ -929,22 +924,49 @@ int test_host_side_compacted_v2(char* config) {
         //     return -1;
         // }
     }
+
+    // output cache counter
+    // for (int i = 0; i < CACHE_SIZE / CACHE_BUCKET_SIZE; i++) {
+    //     printf("cache[%d]: %u\n", i, bc->cnt[i]);
+    // }
+
+    printf("test_host_side_dlmpht_multi_threads passed\n");
+    printf("cache hit: %u, total: %u\n", cache_hit, cache_total);
     // break;
-
-    printf("all query passed\n");
-    printf("cache hit ratio: %lf, total access: %lu\n",(double)(bc->hit_count) / (bc->total_access), bc->total_access);
-    printf("average DMA accesses for each query: %f, average DMA accesses for buckets: %f\n", (double)(total_dma_cnt) / num_querys, (double)(bucket_dma_cnt) / num_querys);
-    printf("average SM accesses for each query (original theoretically: (height-1)*epsilon*2/4+epsilon*2/2/4): %f\n", (double)(total_ls_cnt) / num_querys);
-    printf("sm_cnt distribution: \n");
-    for (i=0; i < 4; i++) { printf("%d: %f\n", i, (double)(sm_cnt[i]) / num_querys); }
-
-    bucket_cache_clean(bc);
-    clmpthash_clean_index(index);
-    clmpthash_clean_bufs(lvas, pas, querys);
-    clmpthash_clean_offloaded_index(inner_index);
 }
 
-int test_host_side_compacted(char* config) {
+void dlmpht_local_reconstruct(void* inner_index){
+    // printf("dlmpht_local_reconstruct\n");
+    
+    // initialize Lindex_meta and level0_segment
+    load_16B_with_tmp_spram(lmpthash_lindex_meta_spram, inner_index, 1);
+    Lindex_metadata* lmd_ = (Lindex_metadata*)lmpthash_lindex_meta_spram;
+    uint16_t sidx_level0 = lmd_->level_offsets[lmd_->num_levels - 1];
+    load_16B_with_tmp_spram(lmpthash_lindex_meta_spram+16, inner_index, sidx_level0);
+    load_16B_with_tmp_spram(lmpthash_lindex_meta_spram+32, inner_index, sidx_level0+1);
+
+    uint16_t l = lmd_->num_levels;
+    uint32_t epsilon = lmd_->epsilon+1;
+    uint16_t* level_offsets = lmd_->level_offsets;
+
+
+    for(int offset=level_offsets[l+1]; offset<level_offsets[l+2]; offset++){
+        // printf("update %d\n", offset);
+        clmpthash_htl_segment* htl_seg = (clmpthash_htl_segment*)lmphash_cache_segment_get_spram;
+        memcpy(htl_seg, inner_index+offset*16, 16);
+        uint8_t version=(htl_seg->meta >> 54)&0xff;
+        // printf("update version: %d ", version);
+        version++;
+        // printf(" to %d\n", version);
+        htl_seg->meta &= 0xc0ffffffffffffff;
+        htl_seg->meta |= ((uint64_t)version & 0xff) << 54;
+        memcpy(inner_index+offset*16, htl_seg, 16);
+    }
+    // printf("dlmpht_local_reconstruct done\n");
+}
+
+void test_host_side_dlmpht_multi_threads(char* config, int num_threads) {
+    // build index
     clmpthash_config cfg;
     clmpthash_lva* lvas;
     clmpthash_physical_addr* pas;
@@ -972,420 +994,46 @@ int test_host_side_compacted(char* config) {
     //
     uint16_t* p16;
     clmpthash_physical_addr pa1;
-    bucket_cache* bc = bucket_cache_init(1024 * 1024 / 16);
-
-    uint64_t total_ls_cnt = 0;
-
-    num_querys = 1;
-    for (uint64_t i = 0; i < num_querys; ++i) {
-        if (i % 10000 == 0) {
-            printf("\r    %lu / %lu\n", i, num_querys);
-            printf("\033[1A");
-        }
-
-        clmpthash_lva lva = querys[i];
-        // query pgm index
-        p16 = (uint16_t*)(inner_index + 16);
-        uint32_t num_levels = p16[0];
-        uint32_t epsilon = p16[1];
-
-        uint16_t* level_offsets = p16 + 2;
-        uint32_t num_htl_segment = level_offsets[num_levels + 2] - level_offsets[num_levels + 1];
-        // for(int j=0;j<=num_levels+2;j++){
-        //     printf("%d ", p16[j+2]);
-        // }
-        uint16_t l = num_levels;
-        clmpthash_pgm_segment* segs = (clmpthash_pgm_segment*)(inner_index);
-        uint32_t sidx = level_offsets[num_levels - 1];
-        while (l > 0) {
-            int64_t pos =
-                (int64_t)(segs[sidx].slope) * (lva - segs[sidx].key) / ((uint32_t)1 << 31) +
-                segs[sidx].intercept;
-            printf("key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva,
-                   segs[sidx].key, segs[sidx].slope, segs[sidx].intercept, pos);
-            if (pos < 0) pos = 0;
-            if (pos > segs[sidx + 1].intercept) pos = segs[sidx + 1].intercept;
-            if (l <= 1) {
-                sidx = PGM_SUB_EPS(pos, epsilon + 1);
-                break;
-            }
-            uint32_t s_idx2 = level_offsets[l - 2] + PGM_SUB_EPS(pos, epsilon + 1);
-
-            while (segs[s_idx2 + 1].key <= lva) {
-                // printf("    s_idx2.key: %lu, lva: %lu\n", segs[s_idx2+1].key, lva);
-                total_ls_cnt++;
-                ++s_idx2;
-            }
-            sidx = s_idx2;
-            --l;
-        }
-        // search for bottmom level
-        printf("bottom level, predict sidx: %u\n", sidx);
-        uint64_t* htl_first_key =(uint64_t*)(inner_index + level_offsets[num_levels] * sizeof(clmpthash_pgm_segment));
-        while ((sidx + 1) < num_htl_segment && htl_first_key[sidx + 1] <= lva) {
-            ++sidx;
-            total_ls_cnt++;
-        }
-        printf("sidx: %u, htl_first_key: %lu\n", sidx, htl_first_key[sidx]);
-        // printf("lva: %lu, sidx: %d\n", lva, sidx);
-
-        clmpthash_htl_segment* htl_segs = (clmpthash_htl_segment*)(inner_index + level_offsets[num_levels + 1] * sizeof(clmpthash_pgm_segment));
-        clmpthash_htl_segment htl_seg = htl_segs[sidx];
-        uint8_t seg_type = htl_seg.meta >> 62;
-        // printf("seg_type: %u\n", seg_type);
-        if (seg_type == 0) {
-            // printf(" accurate segment\n");
-            clmpthash_physical_addr* pas = (clmpthash_physical_addr*)(htl_seg.addr + 8);
-            uint64_t pos = lva - htl_first_key[sidx];
-            pa1 = pas[pos];
-        } else if (seg_type == 4) {
-            printf(" error segment\n");
-            return -1;
-        } else {
-            // printf(" approximate segment\n");
-            uint64_t hash = MurmurHash2_64(&lva, sizeof(clmpthash_lva), 0x123456789);
-            uint64_t blk;
-            uint32_t table_size = htl_seg.meta & 0xffffff;
-            uint64_t table_addr = htl_seg.addr + 8;
-            uint64_t bucket_addr = table_addr + table_size * sizeof(clmpthash_physical_addr);
-            uint32_t slope = (htl_seg.meta >> 32) & 0x3fffffff;
-            uint64_t width = (htl_seg.meta & 0xff000000) >> 24;
-            if (seg_type == 1) {
-                // linear bucketing
-                blk = (lva - htl_first_key[sidx]) / slope;
-
-            } else {
-                // hash bucketing
-                // printf("hash:%lu, slope: %lu\n", hash, slope);
-                blk = hash % slope;
-            }
-            // printf("blk: %lu\n", blk);
-            blk = blk * width;
-            width = -(width == 64) | ((((uint64_t)1) << width) - 1);
-            /*
-            bucket_addr+=blk>>3;
-            uint64_t p=*(uint64_t*)bucket_addr;
-            */
-            uint64_t p;
-            uint32_t compressed_blk_id = blk >> 3;
-            // uint64_t blk_value=bucket_cache_get(bc, sidx, compressed_blk_id);
-            uint64_t blk_value = bucket_cache_get_v2(bc, htl_first_key[sidx], compressed_blk_id);
-            // printf("lva: %lx, blk: %lx, blk_value: %lx, seg_type: %u\n", lva, blk, blk_value,
-            // seg_type);
-
-            blk_value = UINT64_MAX;
-            if (blk_value != UINT64_MAX) {
-                // cache hit
-                p = blk_value;
-            } else {
-                bucket_addr += blk >> 3;
-                p = *(uint64_t*)bucket_addr;
-                // cache miss
-                // bucket_cache_put(bc, sidx, compressed_blk_id, p);
-                bucket_cache_put(bc, htl_first_key[sidx], compressed_blk_id, p);
-            }
-            p = p >> (blk & 7) & width;
-            // printf("p: %lu\n", p);
-            p = MurmurHash2_64(&p, sizeof(uint64_t), 0x123456789);
-            // printf("hash: %lu, hash_p: %lu\n", hash, p);
-
-            p = (p ^ hash) % table_size;
-            // printf("pos: %lu\n", p);
-            clmpthash_physical_addr* pas = (clmpthash_physical_addr*)table_addr;
-            pa1 = pas[p];
-        }
-
-        clmpthash_lva _lva = 0;
-        for (int j = 0; j < 8; j++) { _lva = (_lva << 8) + pa1.data[j]; }
-        if (_lva != lva) {
-            printf("%lu: wrong result, should be 0x%lx, but got 0x%lx\n", i, lva, _lva);
-            return -1;
-        }
-        // break;
-    }
-    printf("all query passed\n");
-    printf("cache hit ratio: %lf, total access: %lu\n",
-           (double)(bc->hit_count) / (bc->total_access), bc->total_access);
-    printf("average local search steps for each query: %f\n", (double)(total_ls_cnt) / num_querys);
-    bucket_cache_clean(bc);
-    clmpthash_clean_index(index);
-    clmpthash_clean_bufs(lvas, pas, querys);
-    clmpthash_clean_offloaded_index(inner_index);
-}
-
-int test_host_side_compacted_batch_without_align(char* config) {
-    clmpthash_config cfg;
-    clmpthash_lva* lvas;
-    clmpthash_physical_addr* pas;
-    clmpthash_lva* querys;
-    uint64_t num_lva;
-    uint64_t num_querys;
-    clmpthash_parse_configuration(config, &cfg, &lvas, &pas, &num_lva, &querys, &num_querys);
-
-    void* index = clmpthash_build_index(lvas, pas, num_lva, &cfg);
-    if (index == NULL) {
-        printf("error building index\n");
-        return -1;
-    }
-
-    void* inner_index = clmpthash_offload_index(index);
-    if (inner_index == NULL) {
-        printf("error offloading index\n");
-        return -1;
-    }
-
-    // nof_dpu_offload_index(inner_index);
-    // return;
-
-    printf("query with compacted inner index, for DPU to use\n");
-    //
-    uint16_t* p16;
-    clmpthash_physical_addr pa1;
-    bucket_cache* bc = bucket_cache_init(1024 * 1024 / 16);
+    bucket_cache* bc = bucket_cache_init(CACHE_SIZE);
 
     uint64_t total_ls_cnt = 0;
     uint64_t sm_cnt[4] = {0};
+    uint64_t total_dma_cnt=0;
+    uint64_t bucket_dma_cnt=0;
+
     uint8_t cache_last_htl_segment=1;
     uint8_t cache_last_htl_segment_hit=0;
     if(cache_last_htl_segment){
-        printf(" ** cache last htl segment\n");
+        printf("Enabled cache last htl segment\n");
     }
-    // num_querys = 10;
 
-    // initialize Lindex_meta and level0_segment
-    memcpy(&(global_spram[0].data[0]), inner_index + 16, 16);
-    Lindex_metadata* lmd_ = (Lindex_metadata*)(&(global_spram[0].data[0]));
-    uint16_t sidx_level0 = lmd_->level_offsets[lmd_->num_levels - 1];
-    memcpy((&(global_spram[0].data[1])), inner_index  + sidx_level0 * 16, 16);
-    memcpy((&(global_spram[0].data[2])), inner_index  + (sidx_level0 + 1) * 16, 16);
 
-    uint8_t i;
-    // num_querys=10;
-    for (uint64_t q = 0; q < num_querys; ++q) {
-        // printf("query %lu\n", i);
-        if (q % 10000 == 0) {
-            printf("\r    %lu / %lu\n", q, num_querys);
-            printf("\033[1A");
+    // 创建多个线程 执行查询
+    pthread_t threads[num_threads];
+    dlmpht_thread_arg args[num_threads];
+    for (int i = 0; i < num_threads; i++) {
+        args[i].bc = bc;
+        args[i].cache_last_htl_segment = cache_last_htl_segment;
+        args[i].inner_index = inner_index;
+        args[i].querys = querys;
+        args[i].num_querys = num_querys;
+        args[i].thread_spram=(spram*)malloc(sizeof(spram)*64);
+        memset(args[i].thread_spram, 0xff, sizeof(spram)*64);
+        int rc=pthread_create(&threads[i], NULL, dlmpht_query_func, &args[i]);
+        if (rc) {
+            printf("ERROR; return code from pthread_create() is %d\n", rc);
+            exit(-1);
         }
-        clmpthash_lva lva = querys[q];
-
-        // query pgm index
-
-        // cached last htl segment
-        clmpthash_htl_segment* htl_seg = (clmpthash_htl_segment*)(&(global_spram[11]));
-        uint64_t s_first_key;
-        cache_last_htl_segment_hit=0;
-        // printf("1: lva %lx\n", lva);
-        if(cache_last_htl_segment){
-            // cached_first_key <= lva
-            uint64_t* cached_firsy_key=(uint64_t*)(&(global_spram[11].data[1]));
-            // printf("2: cached_firsy_key %lx\n", *cached_firsy_key);
-            if(*cached_firsy_key <= lva){
-                // cached_next_key > lva
-                uint64_t* cached_next_key=(uint64_t*)(&(global_spram[10])) + cached_firsy_key[1];
-                // printf("3: cached_next_key %lx\n", *cached_next_key);
-                if(*cached_next_key > lva){
-                    s_first_key=*cached_firsy_key;
-                    cache_last_htl_segment_hit=1;
-                }
-            }
-        }
-
-        if(!cache_last_htl_segment || !cache_last_htl_segment_hit){
-            // get Lindex_metadata
-            Lindex_metadata* lmd = (Lindex_metadata*)(&(global_spram[0].data[0]));
-            uint16_t l = lmd->num_levels;
-            uint32_t epsilon = lmd->epsilon;
-            uint16_t* level_offsets = lmd->level_offsets;
-            // uint32_t num_htl_segment=level_offsets[l+2]-level_offsets[l+1];
-            clmpthash_pgm_segment* level0_segments = (clmpthash_pgm_segment*)(&(global_spram[0].data[1]));
-
-            // predict with cached level[l] segment
-            int64_t pos =(int64_t)(level0_segments->slope) * (lva - level0_segments->key) / ((uint32_t)1 << 31) +level0_segments->intercept;
-            // printf("key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva,level0_segments->key, level0_segments->slope, level0_segments->intercept, pos);
-            if (pos < 0) pos = 0;
-            if (pos > level0_segments[1].intercept) pos = level0_segments[1].intercept;
-
-
-            clmpthash_pgm_segment* l1_segs[2];
-            l1_segs[0] = (clmpthash_pgm_segment*)(&(global_spram[1]));
-            l1_segs[1] = (clmpthash_pgm_segment*)(&(global_spram[2]));  // use two sprams for segments
-            uint32_t s_idx1;
-            uint32_t s_idx2;
-            while (l > 1) {
-                // search and compare segment first key at level[l-1]
-                s_idx2 = level_offsets[l - 2] + PGM_SUB_EPS(pos, epsilon + 1);  // searching start point at next level
-                uint32_t s_idx1 = s_idx2;
-                uint8_t active_spram = 1;
-                while (true) {
-                    active_spram = (active_spram ^ 1);
-                    // printf("active_spram: %u\n", active_spram);
-                    // load 4 segments at a time
-                    memcpy(l1_segs[active_spram], inner_index + (s_idx2 + 1) * 16, 64);
-                    total_ls_cnt++;
-                    sm_cnt[0]++;
-
-                    i=0;
-                    for (; i < 4; i++) {
-                        if (l1_segs[active_spram][i].key > lva) { break; }
-                    }
-                    s_idx2 += i;
-                    if (i < 4) {
-                        if (i == 0) {
-                            // printf("s_idx1: %u, s_idx2: %u\n", s_idx1, s_idx2);
-                            // lva < l1_segs[l1_seg_id][0].key
-                            if (s_idx1 == s_idx2) {
-                                // start segment happen to be the right segment
-                                // load the segment on the other spram
-                                memcpy(l1_segs[active_spram ^ 1] + 3, inner_index + (s_idx1) * 16, 16);total_ls_cnt++;sm_cnt[1]++;
-                            }
-                            // third segment on the other spram is the right segment in level[l-1]
-                            pos = (int64_t)(l1_segs[active_spram ^ 1][3].slope) * (lva - l1_segs[active_spram ^ 1][3].key) / ((uint32_t)1 << 31) +  l1_segs[active_spram ^ 1][3].intercept;
-                            // printf("[i==0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n",lva, l1_segs[active_spram ^ 1][3].key,l1_segs[active_spram ^ 1][3].slope,l1_segs[active_spram ^ 1][3].intercept, pos);
-                            if (pos < 0) pos = 0;
-                            if (pos > l1_segs[active_spram][0].intercept)pos = l1_segs[active_spram][0].intercept;
-                        } else {
-                            // i=1 or 2 or 3
-                            // l1_segs[l1_seg_id][i-1].key <= lva < l1_segs[l1_seg_id][i].key
-                            // (i-1)-th segment on this spram is the right segment in level[l-1]
-                            pos = (int64_t)(l1_segs[active_spram][i - 1].slope) *      (lva - l1_segs[active_spram][i - 1].key) / ((uint32_t)1 << 31) +  l1_segs[active_spram][i - 1].intercept;
-                            // printf("[i>0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n",lva, l1_segs[active_spram][i - 1].key,l1_segs[active_spram][i - 1].slope,l1_segs[active_spram][i - 1].intercept, pos);
-                            if (pos < 0) pos = 0;
-
-                            if (pos > l1_segs[active_spram][i].intercept)pos = l1_segs[active_spram][i].intercept;
-                        }
-                        break;
-                    }
-                }
-                l=l-1;
-            }
-
-            // reach level-0, search for the right first_key
-            
-            s_idx1 = PGM_SUB_EPS(pos, epsilon + 1);
-            // printf("s_idx1: %u\n", s_idx1);
-            uint64_t* fks = (uint64_t*)(&(global_spram[10]));
-            memcpy(fks, inner_index  + (level_offsets[lmd->num_levels] + s_idx1 / 2) * 16, 64);
-            total_ls_cnt++;
-            sm_cnt[2]++;
-            s_first_key = fks[0];
-            s_idx1 = s_idx1 & (~(uint32_t)1);
-            // printf("s_idx1: %u, s_first_key: %lu\n", s_idx1, s_first_key);
-            do {
-                i=0;
-                for (; i < 8; i++) {
-                    // printf("i: %u, fks[i]: %lu, lva: %lu\n", i, fks[i], lva);
-                    if (fks[i] > lva) { break; }
-                    s_first_key = fks[i];
-                }
-                s_idx1 += i;
-                if (i < 8) {
-                    break;
-                } else {
-                    memcpy(fks, inner_index + (level_offsets[lmd->num_levels] + s_idx1 / 2) * 16, 64);
-                    sm_cnt[2]++;
-                    total_ls_cnt++;
-                }
-            } while (1);
-            if (s_idx1 > 0) --s_idx1;
-            // printf("s_idx1: %u, s_first_key: %lu\n", s_idx1, s_first_key);
-
-            // load htl segment
-            
-            memcpy(htl_seg, inner_index + (level_offsets[lmd->num_levels + 1] + s_idx1) * 16, 16);
-            sm_cnt[3]++;
-            total_ls_cnt++;
-            // save current first_key to cache
-            htl_seg[1].addr = s_first_key;
-            htl_seg[1].meta = i;
-        }
-
-        
-
-
-
-        uint8_t seg_type = htl_seg->meta >> 62;
-        // printf("seg_type: %u\n", seg_type);
-        if (seg_type == 0) {
-            // printf(" accurate segment\n");
-            clmpthash_physical_addr* pas = (clmpthash_physical_addr*)(htl_seg->addr + 8);
-            uint64_t pos = lva - s_first_key;
-            pa1 = pas[pos];
-        } else if (seg_type == 4) {
-            printf(" error segment\n");
-            return -1;
-        } else {
-            // printf(" approximate segment\n");
-            uint64_t hash = MurmurHash2_64(&lva, sizeof(clmpthash_lva), 0x123456789);
-            uint64_t blk;
-            uint32_t table_size = htl_seg->meta & 0xffffff;
-            uint64_t table_addr = htl_seg->addr + 8;
-            uint64_t bucket_addr = table_addr + table_size * sizeof(clmpthash_physical_addr);
-            uint32_t slope = (htl_seg->meta >> 32) & 0x3fffffff;
-            uint64_t width = (htl_seg->meta & 0xff000000) >> 24;
-            if (seg_type == 1) {
-                // linear bucketing
-                blk = (lva - s_first_key) / slope;
-
-            } else {
-                // hash bucketing
-                // printf("hash:%lu, slope: %lu\n", hash, slope);
-                blk = hash % slope;
-            }
-            // printf("blk: %lu\n", blk);
-            blk = blk * width;
-            width = -(width == 64) | ((((uint64_t)1) << width) - 1);
-            /*
-            bucket_addr+=blk>>3;
-            uint64_t p=*(uint64_t*)bucket_addr;
-            */
-            uint64_t p;
-            uint32_t compressed_blk_id = blk >> 3;
-            // uint64_t blk_value=bucket_cache_get(bc, sidx, compressed_blk_id);
-            uint64_t blk_value = bucket_cache_get_v2(bc, s_first_key, compressed_blk_id);
-            // printf("lva: %lx, blk: %lx, blk_value: %lx, seg_type: %u\n", lva, blk, blk_value,
-            // seg_type);
-
-            blk_value = UINT64_MAX;
-            if (blk_value != UINT64_MAX) {
-                // cache hit
-                p = blk_value;
-            } else {
-                bucket_addr += blk >> 3;
-                p = *(uint64_t*)bucket_addr;
-                // cache miss
-                // bucket_cache_put(bc, sidx, compressed_blk_id, p);
-                bucket_cache_put(bc, s_first_key, compressed_blk_id, p);
-            }
-            p = p >> (blk & 7) & width;
-            // printf("p: %lu\n", p);
-            p = MurmurHash2_64(&p, sizeof(uint64_t), 0x123456789);
-            // printf("hash: %lu, hash_p: %lu\n", hash, p);
-
-            p = (p ^ hash) % table_size;
-            // printf("pos: %lu\n", p);
-            clmpthash_physical_addr* pas = (clmpthash_physical_addr*)table_addr;
-            pa1 = pas[p];
-        }
-
-        clmpthash_lva _lva = 0;
-        for (int j = 0; j < 8; j++) { _lva = (_lva << 8) + pa1.data[j]; }
-        if (_lva != lva) {
-            printf("%lu: wrong result, should be 0x%lx, but got 0x%lx\n", q, lva, _lva);
-            return -1;
-        }
+        sleep(1);
     }
-    // break;
 
-    printf("all query passed\n");
-    printf("cache hit ratio: %lf, total access: %lu\n",(double)(bc->hit_count) / (bc->total_access), bc->total_access);
-    printf("average SM accesses for each query (approximate=(height-1)*epsilon*2/4+epsilon*2/2/4): %f\n", (double)(total_ls_cnt) / num_querys);
-    printf("sm_cnt: \n");
-    for (i=0; i < 4; i++) { printf("%d: %f\n", i, (double)(sm_cnt[i]) / num_querys); }
-    bucket_cache_clean(bc);
-    clmpthash_clean_index(index);
-    clmpthash_clean_bufs(lvas, pas, querys);
-    clmpthash_clean_offloaded_index(inner_index);
+    dlmpht_local_reconstruct(inner_index);
+
+    for (int i = 0; i < num_threads; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    // printf("cache hit ratio: %lf, total access: %lu\n",(double)(bc->hit_count) / (bc->total_access), bc->total_access);
 }
 
 int cmp(const void* a, const void* b) {
@@ -1581,8 +1229,9 @@ int main(int argc, char** argv) {
     // 根据参数选择不同的功能
     if (strcmp(argv[1], "scalability") == 0) {
         scalability_benchmarks(argv[2]);
-    }else if(strcmp(argv[1], "dlmpht") == 0){
-        test_host_side_compacted_batch_without_align(argv[2]);
+    }else if(strcmp(argv[1], "dlmpht-threads") == 0){
+        int num_threads = atoi(argv[2]);
+        test_host_side_dlmpht_multi_threads(argv[3], num_threads);
     }else{
         printf("unknown command: %s\n", argv[1]);
         printf("Usage: ./clmpthash_test scalability <config>\n");
