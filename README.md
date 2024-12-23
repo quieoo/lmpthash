@@ -83,7 +83,7 @@ cd example
 gcc -o ctest clmpthash_test.c -L../build -lclmpthash -lstdc++ -lm -lpthread
 ```
 
-## HiDPU Simulator:
+## HiDPU Simulator
 
 Based on LMPTHASH index structure, we build `HiDPU` which offload the inner index to the DPU and use the techniques such as parallel memory access and caching to improve index lookup efficiency. 
 
