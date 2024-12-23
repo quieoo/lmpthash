@@ -10,5 +10,4 @@ dynamic_alpha 1
 alpha_limits 0.8
 left_epsilon 1
 right_epsilon 100
-trace_path ../../ftl_exp/ftl_trace/usr_2.csv
-
+trace_type random

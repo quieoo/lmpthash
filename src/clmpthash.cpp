@@ -1,6 +1,11 @@
 #include "lmpthash.hpp"
 #include "clmpthash.h"
 #include "include/utils/logger.hpp"
+#include <iostream>
+#include <vector>
+#include <unordered_set>
+#include <algorithm>
+#include <cstdlib>
 
 void cparse_msr_cambridge(clmpthash_lva** lvas, clmpthash_physical_addr** pas, uint64_t* num_lva, clmpthash_lva** querys, uint64_t * num_querys, std::string trace_path){
     std::vector<clmpthash_lva> uniq_lpn;
@@ -19,6 +24,35 @@ void cparse_msr_cambridge(clmpthash_lva** lvas, clmpthash_physical_addr** pas, u
     for(uint64_t i=0;i<lpns.size();i++){
         (*querys)[i]=lpns[i];
     }
+}
+
+void cparse_random_gen(clmpthash_lva** lvas, clmpthash_physical_addr** pas, uint64_t* num_lva, clmpthash_lva** querys, uint64_t * num_querys, std::string trace_path){
+    if(*num_querys < 0){
+        std::cout << "num_querys is not set" << std::endl;
+        return;
+    }else{
+        std::cout << "randomly generate " << *num_querys << " lpns" << std::endl;
+    }
+    
+    std::vector<clmpthash_lva> lpns(*num_querys);
+    std::generate(lpns.begin(), lpns.end(), std::rand);
+
+    std::unordered_set<clmpthash_lva> ht(lpns.begin(), lpns.end());
+    std::vector<clmpthash_lva> uniq_lpn(ht.begin(), ht.end());
+    std::sort(uniq_lpn.begin(), uniq_lpn.end());
+
+    *lvas = new clmpthash_lva[uniq_lpn.size()];
+    *querys = new clmpthash_lva[lpns.size()];
+    *num_lva=uniq_lpn.size();
+
+    for(size_t i = 0; i < uniq_lpn.size(); i++) {
+        (*lvas)[i] = uniq_lpn[i];
+    }
+    for(size_t i = 0; i < lpns.size(); i++) {
+        (*querys)[i] = lpns[i];
+    }
+
+    std::cout<<"number of unique lpns: "<< uniq_lpn.size()<<std::endl;
 }
 
 void cparse_femu(clmpthash_lva** lvas, clmpthash_physical_addr** pas, uint64_t* num_lva, clmpthash_lva** querys, uint64_t * num_querys, std::string trace_path){
@@ -46,6 +80,8 @@ void clmpthash_parse_configuration(char* config_path, clmpthash_config* cfg, clm
         cparse_msr_cambridge(lvas, pas, num_lva, querys, num_querys, config.trace_path);
     }else if(config.trace_type=="femu"){
         cparse_femu(lvas, pas, num_lva, querys, num_querys, config.trace_path);
+    }else if(config.trace_type=="random"){
+        cparse_random_gen(lvas, pas, num_lva, querys, num_querys, config.trace_path);
     }else{
         printf("unsupported trace type: %s\n", config.trace_type.c_str());
         exit(0);
@@ -162,7 +198,7 @@ void* clmpthash_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, u
         return NULL;
     }
 
-    printf("Build index done\n");
+    // printf("----------Build index done----------\n");
 
     return static_cast<void*>(builder);
 }
@@ -284,7 +320,7 @@ void* clt_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_
     pgm::PGMIndex<uint64_t, 64,4,uint32_t> pgm_index;
     // sort
     assert(std::is_sorted(keys.begin(), keys.end()));
-    printf("max key: %lx\n", keys[num-1]);
+    // printf("max key: %lx\n", keys[num-1]);
     
     //binary serach for a minimum epsilon that fits the inner nodes in limited memory
     gslogger.func_log(0, "    binary search for a minimum epsilon that fits the inner nodes in limited memory\n");
@@ -400,7 +436,7 @@ void* clt_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_
     uint64_t lva2pa_size=sizeof(clmpthash_lva)+sizeof(clmpthash_physical_addr);
     uint64_t pas_in_buf=2097136/lva2pa_size;
     uint64_t num_bufs = (num + pas_in_buf - 1) / pas_in_buf;
-    printf("    num_bufs: %ld\n", num_bufs);
+    // printf("    num_bufs: %ld\n", num_bufs);
 
     uint64_t buf_id=0;
     uint64_t* sub_table_addr=(uint64_t*)(inner_index+1024*1024);
@@ -422,7 +458,8 @@ void* clt_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_
         sub_table_addr[buf_id++]=(uint64_t)sub_table;
         offset=last;
     }
-    printf("#### CPU Memory Consumption: %f MB ####\n", (float)sm_size/(1024*1024));
+    printf("### inner index size: %f MB ###\n", pgm_index.size_in_bytes()/1024.0/1024.0);
+    printf("### mapping table size: %f MB ###\n", (float)sm_size/(1024*1024));
     return inner_index;
 }
 
@@ -491,6 +528,8 @@ void* cpt_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, uint64_
         // printf("l3_addr: %llx\n", l3_addr);
         l3_table[l3_addr]=values[i];
     }
-    printf("### CPU Memory Consumption: %f MB ###\n", sm_size/1024.0/1024.0);
+    printf("### inner index size: %f MB ###\n", 1.0);
+    printf("### mapping table size: %f MB ###\n", sm_size/1024.0/1024.0);
+
     return inner_index;
 }

@@ -89,7 +89,7 @@ struct MonoSegmentMerger{
             segments.back().last_key.push_back(*it);
             ++it;
         }
-        printf("    load keys: %lu, get %lu monotonical segments\n", keys.size(), segments.size());
+        // printf("    load keys: %lu, get %lu monotonical segments\n", keys.size(), segments.size());
     }
 
     void mockkeys(){
@@ -716,7 +716,7 @@ struct LMPTHashBuilder{
                 l=mid+1;
             }
         }
-        printf("    min_height: %d, min_epsilon: %d\n", min_height, ep);
+        printf("    found minimum height: %d, minimum epsilon under the height: %d\n", min_height, ep);
         if(ep==-1){
             printf("        WARNING: can't find a valid epsilon\n");
             return -1;
@@ -804,7 +804,7 @@ struct LMPTHashBuilder{
     int Compacting(void* ptr){
         printf("## Compacting ##\n");
         uint32_t inner_index_size=32+pgm_index.segments.size()*sizeof(clmpthash_pgm_segment)+(lmpt_segments.size()+1)/2*2*sizeof(uint64_t)+lmpt_segments.size()*16;
-        printf("    # Inner Index Size: %f MB\n", inner_index_size/1024.0/1024.0);
+        
         if(inner_index_size > 1024*1024){
             printf("Error while Compacting: inner_index_size > 1MB. %f MB\n", inner_index_size/1024.0/1024.0);
             return -1;
@@ -973,7 +973,8 @@ struct LMPTHashBuilder{
                 p64[i*2+1]=pthash_meta;
             }
         }
-        printf("#### CPU Memory Consumption: %f MB ####\n", (double)sm_size/1024/1024);
+        printf("### Inner Index Size: %f MB ###\n", inner_index_size/1024.0/1024.0);
+        printf("### mapping table size: %f MB ###\n", (double)sm_size/1024/1024);
         return 0;
     }
 };

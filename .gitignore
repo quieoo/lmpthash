@@ -3,4 +3,5 @@ old/
 .DS_Store
 example/ctest
 .vscode/settings.json
-example/ctest
+
+example/build/
