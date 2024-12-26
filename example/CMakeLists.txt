@@ -8,7 +8,11 @@ set(CMAKE_CXX_STANDARD 11)
 
 set(SOURCE_FILES HiDPU_Simulator.c)
 
-add_executable(hidpu ${SOURCE_FILES})
+file(GLOB_RECURSE LEARNED_FTL_FILES "LearnedFTL/*.c")
+add_executable(hidpu ${SOURCE_FILES} ${LEARNED_FTL_FILES})
+
+include_directories(${CMAKE_SOURCE_DIR}/LearnedFTL)
+
 
 find_library(CLMPTHASH_LIB clmpthash PATHS ${CMAKE_SOURCE_DIR}/../build)
 
@@ -20,4 +24,4 @@ else()
 endif()
 
 
-target_link_libraries(hidpu ${CLMPTHASH_LIB} stdc++ m pthread )
+target_link_libraries(hidpu ${CLMPTHASH_LIB} stdc++ m pthread)

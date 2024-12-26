@@ -108,6 +108,11 @@ trace_path /home/quieoo/ftl/trace/MSR-Cambridge/web_2.csv
 ```
 Among those the parameters, `trace_type` and `trace_path` describe the trace file used to create index and run the queries. Trace files can be downloaded from [here](http://iotta.snia.org/traces/block-io/388).
 
+Currently, we support the following trace types:
+- `msr`: MSR trace
+- `random`: randomly generated trace
+- `femu`: the trace captured by running FEMU and recording the LPNs accessed by the guest OS. Each line in the femu trace looks like this: ```"data time lpn"```
+
 Meaning of other parameters can be found in [here](include/clmpthash.h).
 
 
@@ -134,11 +139,13 @@ Run the following command to build and test three-level page table on given trac
 ./build/hidpu learnedtable <config_path>
 ```
 
-### HiDPU with Reconstruction and Multi-threads Support
+### HiDPU with Reconstruction and Multi-threads
 Run the following command to build and test HiDPU on given trace file:
 ```
 ./build/hidpu lmpthash <num_threads> <if_reconstruction> <config_path>
 ```
+
+Among these parameters, `num_threads` is the number of concurrent threads to run the queries, `if_reconstruction` is a flag to indicate whether to do `LocalReconstruction` during the query, if so the value should be `1`, otherwise `0`.
 
 ### Scalability Test
 In this test, we extend the original trace with a given `scale_factor` while maintaineing the same access pattern. We use the extended trace to build the index, and report the index size.

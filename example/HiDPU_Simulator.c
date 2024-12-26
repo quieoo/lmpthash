@@ -6,6 +6,8 @@
 #include <pthread.h>
 #include <stdatomic.h>
 
+#include "ld-tpftl.h"
+
 #define PGM_SUB_EPS(x, epsilon) ((x) <= (epsilon) ? 0 : ((x) - (epsilon)))
 #define DMA_LATENCY 0.5
 
@@ -619,14 +621,19 @@ int test_lt(char* config) {
             return -1;
         }
     }
-    
     clock_gettime(CLOCK_MONOTONIC, &end);
-    uint64_t total_lat=(end.tv_sec-start.tv_sec)*1000000000+(end.tv_nsec-start.tv_nsec);
-    
     printf("pass all queries\n");
+
+    uint64_t total_lat=(end.tv_sec-start.tv_sec)*1000000000+(end.tv_nsec-start.tv_nsec);
+    printf("-------------------------------\n");
+    printf("The latency is influenced by both CPU processing and DMA transfer, which depends on the width and frequency, varying across different architectures. For example, in our architecture, the latency of each DMA request ranges from 0.5 to 0.8 µs, depending on the width. For the PageTable, Learned Table, and HiDPU, one DMA request is always issued for the actual mapping entries, each of which is 20 bytes in size. Note that the index processing latency does not accurately reflect the actual latency on the DPU; it is primarily used for correctness testing. \n");
+
+    printf("Index processing latency in CPU: %lf us\n",(double)total_lat/1000/num_querys);
+    printf("Average number of DMA requests: %f\n", (double)dma_num/num_querys);
+    printf("Average DMA size: %lf bytes\n", (double)average_dma_size);
+
     // printf("throughput: %lf MQ/S\n", (num_querys) / ((double)(total_lat) / 1000));
-    printf("    spram cache hit ratio: %f\n",(double)spram_cache_hit/num_querys);
-    printf("    dma size: %lu, average dma num: %f\n", average_dma_size, (double)dma_num/num_querys);
+    // printf("    spram cache hit ratio: %f\n",(double)spram_cache_hit/num_querys);
 }
 
 
@@ -645,9 +652,14 @@ typedef struct{
     void* inner_index;
     bucket_cache* bc;
     spram* thread_spram;
+    uint64_t* num_dmas;
+    uint64_t* dma_volume; // in bytes
+    uint64_t* latency;
+    int thread_id;
+    
 } dlmpht_thread_arg;
 
-void dlmpht_query_func(void* arg){
+void* dlmpht_query_func(void* arg){
     dlmpht_thread_arg* _arg=(dlmpht_thread_arg*)arg;
     uint64_t num_querys=_arg->num_querys;
     clmpthash_lva* querys=_arg->querys;
@@ -668,6 +680,14 @@ void dlmpht_query_func(void* arg){
     uint64_t cache_hit=0;
     uint64_t cache_total=0;
     // num_querys=1;
+
+    struct timespec start, end;
+    start.tv_sec = 0;
+    start.tv_nsec = 0;
+    end.tv_sec = 0;
+    end.tv_nsec = 0;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
 
     for (uint64_t q = 0; q < num_querys; ++q) {
         // printf("query %lu\n", q);
@@ -875,6 +895,8 @@ void dlmpht_query_func(void* arg){
             clmpthash_physical_addr* pas = (clmpthash_physical_addr*)(htl_seg->addr + 8);
             uint64_t pos = lva - s_first_key;
             pa1 = pas[pos];
+            _arg->num_dmas[_arg->thread_id]++;
+            _arg->dma_volume[_arg->thread_id] += sizeof(clmpthash_physical_addr);
         } else if (seg_type == 4) {
             printf(" error segment\n");
             exit(0);
@@ -919,6 +941,8 @@ void dlmpht_query_func(void* arg){
             } else {
                 bucket_addr += blk >> 3;
                 p = *(uint64_t*)bucket_addr;
+                _arg->num_dmas[_arg->thread_id]++;
+                _arg->dma_volume[_arg->thread_id] += sizeof(uint64_t);
                 // cache miss
                 bucket_cache_put(bc, s_first_key, compressed_blk_id, p, version);
                 // usleep(DMA_LATENCY);
@@ -932,6 +956,9 @@ void dlmpht_query_func(void* arg){
             // printf("pos: %lx\n", p);
             clmpthash_physical_addr* pas = (clmpthash_physical_addr*)table_addr;
             pa1 = pas[p];
+            _arg->num_dmas[_arg->thread_id]++;
+            _arg->dma_volume[_arg->thread_id] += sizeof(clmpthash_physical_addr);
+            
             // usleep(DMA_LATENCY);
         }
 
@@ -942,6 +969,12 @@ void dlmpht_query_func(void* arg){
         //     return -1;
         // }
     }
+
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    uint64_t total_lat=(end.tv_sec-start.tv_sec)*1000000000+(end.tv_nsec-start.tv_nsec);
+
+    _arg->latency[_arg->thread_id]=total_lat;
+    
 
     // output cache counter
     // for (int i = 0; i < CACHE_SIZE / CACHE_BUCKET_SIZE; i++) {
@@ -996,13 +1029,13 @@ void test_host_side_dlmpht_multi_threads(char* config, int num_threads, bool rec
     void* index = clmpthash_build_index(lvas, pas, num_lva, &cfg);
     if (index == NULL) {
         printf("error building index\n");
-        return -1;
+        return;
     }
 
     void* inner_index = clmpthash_offload_index(index);
     if (inner_index == NULL) {
         printf("error offloading index\n");
-        return -1;
+        return;
     }
 
     // nof_dpu_offload_index(inner_index);
@@ -1027,6 +1060,10 @@ void test_host_side_dlmpht_multi_threads(char* config, int num_threads, bool rec
 
     pthread_t threads[num_threads];
     dlmpht_thread_arg args[num_threads];
+    uint64_t num_dmas[1024]={0};    // max 1024 threads
+    uint64_t dma_volume[1024]={0};
+    uint64_t latency[1024]={0};
+
     for (int i = 0; i < num_threads; i++) {
         args[i].bc = bc;
         args[i].cache_last_htl_segment = cache_last_htl_segment;
@@ -1034,25 +1071,48 @@ void test_host_side_dlmpht_multi_threads(char* config, int num_threads, bool rec
         args[i].querys = querys;
         args[i].num_querys = num_querys;
         args[i].thread_spram=(spram*)malloc(sizeof(spram)*64);
+        args[i].num_dmas = num_dmas;
+        args[i].dma_volume = dma_volume;
+        args[i].latency = latency;
+        args[i].thread_id = i;
+
+
         memset(args[i].thread_spram, 0xff, sizeof(spram)*64);
         int rc=pthread_create(&threads[i], NULL, dlmpht_query_func, &args[i]);
         if (rc) {
             printf("ERROR; return code from pthread_create() is %d\n", rc);
             exit(-1);
         }
-        if(reconstruct)
-            sleep(1);
+        // if(reconstruct)
+        //     sleep(1);
     }
 
 
-    if (reconstruct)
+    if (reconstruct){
+        printf("Reconstruct the index\n");
         dlmpht_local_reconstruct(inner_index);
+    }
 
     for (int i = 0; i < num_threads; i++) {
         pthread_join(threads[i], NULL);
     }
 
-    printf("cache hit ratio: %lf, total access: %lu\n",(double)(bc->hit_count) / (bc->total_access), bc->total_access);
+    uint64_t total_lat=0;
+    uint64_t total_dma=0;
+    uint64_t total_dma_volume=0;
+    for (int i = 0; i < num_threads; i++) {
+        total_lat += latency[i];
+        total_dma += num_dmas[i];
+        total_dma_volume += dma_volume[i];
+    }
+    printf("-------------------------------\n");
+    printf("The latency is influenced by both CPU processing and DMA transfer, which depends on the width and frequency, varying across different architectures. For example, in our architecture, the latency of each DMA request ranges from 0.5 to 0.8 µs, depending on the width. For the PageTable, Learned Table, and HiDPU, one DMA request is always issued for the actual mapping entries, each of which is 20 bytes in size. Note that the index processing latency does not accurately reflect the actual latency on the DPU; it is primarily used for correctness testing.\n");
+    printf("Index processing latency in CPU: %lf us\n", (double)total_lat/1000/(num_querys*num_threads));
+    printf("Average number of DMA request: %lf\n", (double)total_dma/num_querys/num_threads);
+    printf("Average DMA volume: %lf bytes\n", (double)total_dma_volume/total_dma);
+    
+
+    printf("pilot cache hit ratio: %lf, total access: %lu\n",(double)(bc->hit_count) / (bc->total_access), bc->total_access);
 }
 
 int cmp(const void* a, const void* b) {
@@ -1064,6 +1124,8 @@ typedef struct {
     uint64_t* querys;
     int thread_id;
     uint64_t* lats;
+    uint64_t* num_dmas;
+    uint64_t* dma_volume; // in bytes
 } thread_arg_t;
 
 void* query_function_pagetable(void* arg){
@@ -1100,6 +1162,8 @@ void* query_function_pagetable(void* arg){
         clmpthash_physical_addr pa1=l3_table[l3_addr];
         // usleep(DMA_LATENCY);
         // In current CPU-only implementataion, it's hard to simulate DMA latency (<1us)
+        t->num_dmas[t->thread_id]+=2;
+        t->dma_volume[t->thread_id]+=(sizeof(clmpthash_physical_addr) + sizeof(uint64_t));
 
         clmpthash_lva _lva = 0;
         for (int j = 0; j < 8; j++) { _lva = (_lva << 8) + pa1.data[j]; }
@@ -1137,6 +1201,8 @@ int test_pt(char* config, int num_threads){
     uint64_t* ls=(uint64_t*)malloc(sizeof(uint64_t)*num_querys*num_threads);
     pthread_t threads[num_threads];
     thread_arg_t args[num_threads];
+    uint64_t num_dmas[1024]={0};    // max 1024 threads
+    uint64_t dma_volume[1024]={0};
 
     struct timespec start, end;
     start.tv_sec = 0;
@@ -1151,6 +1217,8 @@ int test_pt(char* config, int num_threads){
         args[i].querys=querys;
         args[i].thread_id=i;
         args[i].lats=ls;
+        args[i].num_dmas=num_dmas;
+        args[i].dma_volume=dma_volume;
         int rc=pthread_create(&threads[i], NULL, query_function_pagetable, &args[i]);
         if (rc) {
             printf("ERROR; return code from pthread_create() is %d\n", rc);
@@ -1162,8 +1230,10 @@ int test_pt(char* config, int num_threads){
         pthread_join(threads[i], NULL);
     }
 
-    printf("all queries passed\n");
+    
 
+    printf("all queries passed\n");
+    
     clock_gettime(CLOCK_MONOTONIC, &end);
     uint64_t total_lat=(end.tv_sec-start.tv_sec)*1000000000+(end.tv_nsec-start.tv_nsec);
     
@@ -1173,7 +1243,25 @@ int test_pt(char* config, int num_threads){
     for (int i = 0; i < num_querys*num_threads; i++) {
         total_ls+=ls[i];
     }
-    // printf("average latency: %lf us\n",(double)(total_ls) / (num_querys*num_threads) / 1000);
+    uint64_t total_dmas=0;
+    for (int i=0; i<num_threads; i++){
+        total_dmas+=num_dmas[i];
+    }
+    uint64_t total_dma_volume=0;
+    for (int i=0; i<num_threads; i++){
+        total_dma_volume+=dma_volume[i];
+    }
+
+    double average_cpu_latency=(double)(total_ls) / (num_querys*num_threads) / 1000;
+    double average_dma=(double)(total_dmas) / (num_querys*num_threads);
+    double average_dma_width=(double)(total_dma_volume) / total_dmas;
+
+    printf("-------------------------------\n");
+    printf("The latency is influenced by both CPU processing and DMA transfer, which depends on the width and frequency, varying across different architectures. For example, in our architecture, the latency of each DMA request ranges from 0.5 to 0.8 µs, depending on the width. For the PageTable, Learned Table, and HiDPU, one DMA request is always issued for the actual mapping entries, each of which is 20 bytes in size. Note that the index processing latency does not accurately reflect the actual latency on the DPU; it is primarily used for correctness testing.\n");
+    printf("Index processing latency in CPU: %lf us\n",average_cpu_latency);
+    printf("Average number of DMA requests: %lf\n",average_dma);
+    printf("Average DMA size: %lf bytes\n", average_dma_width);
+
     // printf("throughput: %lf MQ/S\n", (num_querys*num_threads) / ((double)(total_lat) / 1000));
 
     // tail latency
@@ -1221,7 +1309,7 @@ void build_index_with_scale(clmpthash_lva* lvas, clmpthash_physical_addr* pas, u
     void* index = clmpthash_build_index(new_lvas, new_pas, num, cfg);
     if (index == NULL) {
         printf("error building index\n");
-        return -1;
+        return;
     }
 
     clmpthash_offload_index(index);
@@ -1248,9 +1336,29 @@ void scalability_benchmarks(char* config, int scale_factor){
     // build_index_with_scale(lvas, pas, num_lva, &cfg, 16);
 }
 
+void learnedftl_benchmarks(char* config){
+    printf("=========learnedftl benchmarks=========\n");
+    clmpthash_config cfg;
+    clmpthash_lva* lvas;
+    clmpthash_physical_addr* pas;
+    clmpthash_lva* querys;
+    uint64_t num_lva;
+    uint64_t num_querys;
+    clmpthash_parse_configuration(config, &cfg, &lvas, &pas, &num_lva, &querys, &num_querys);
+
+    printf("total lva: %lu, total query: %lu\n", num_lva, num_querys);
+
+    void* ssd=ssd_init();
+    bulk_write(ssd, lvas, num_lva);
+
+    printf("begin to read\n");
+    bulk_read(ssd, querys, num_querys);
+
+    report_statistics(ssd);
+}
 
 int main(int argc, char** argv) {
-    if(strcmp(argv[1], "lmpthash_host") == 0){
+    if(strcmp(argv[1], "lmpthash") == 0){
         test_host_side_clmpthash(argv[2]);
     }else if(strcmp(argv[1], "pagetable") == 0){
         int num_threads = 1;
@@ -1261,17 +1369,25 @@ int main(int argc, char** argv) {
     }else if(strcmp(argv[1], "scalability")==0){
         int scale_factor = atoi(argv[2]);
         scalability_benchmarks(argv[3], scale_factor);  
-    }else if(strcmp(argv[1], "lmpthash")==0){
+    }else if(strcmp(argv[1], "hidpu")==0){
         int num_threads = atoi(argv[2]);
         int reconstruct= atoi(argv[3]);
         test_host_side_dlmpht_multi_threads(argv[4], num_threads, reconstruct==1);
+    }else if(strcmp(argv[1], "learnedftl")==0){
+        // void* ssd=ssd_init();
+        
+        // uint64_t lpns[10]={0, 1, 2, 3, 5, 6, 8, 9, 11, 13};
+        // bulk_write(ssd, lpns, 10);
+        // bulk_read(ssd, lpns, 10);
+        // TODO: some bugs still to be fixed
+        learnedftl_benchmarks(argv[2]);
     }else{
         printf("unknown command: %s\n", argv[1]);
         printf("Usage:\n");
-        printf("./program_name lmpthash_host <config_path>\n");
+        printf("./program_name lmpthasht <config_path>\n");
         printf("./program_name pagetable <config_path>\n");
         printf("./program_name learnedtable <config_path>\n");
-        printf("./program_name lmpthash <num_threads> <if_reconstruct> <config_path>\n");
-        printf("./program_name scalability <config_path>\n");
+        printf("./program_name hidpu <num_threads> <if_reconstruct> <config_path>\n");
+        printf("./program_name scalability <scale_factor> <config_path>\n");
     }
 }

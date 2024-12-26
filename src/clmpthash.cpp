@@ -81,6 +81,7 @@ void clmpthash_parse_configuration(char* config_path, clmpthash_config* cfg, clm
     }else if(config.trace_type=="femu"){
         cparse_femu(lvas, pas, num_lva, querys, num_querys, config.trace_path);
     }else if(config.trace_type=="random"){
+        *num_querys=config.num_keys;
         cparse_random_gen(lvas, pas, num_lva, querys, num_querys, config.trace_path);
     }else{
         printf("unsupported trace type: %s\n", config.trace_type.c_str());

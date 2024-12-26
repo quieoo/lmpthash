@@ -321,6 +321,10 @@ struct lmpthash_config{
             else if(name=="right_epsilon") right_epsilon=std::stoi(value);
             else if(name=="trace_path") trace_path=value;
             else if(name=="trace_type") trace_type=value;
+            else if(name=="num_keys") num_keys=std::stoull(value);
+            else{
+                std::cout<<"unknown parameter: "<<name<<std::endl;
+            }
         }
 
         // std::cout<<"================="<<config_file<<"=================="<<std::endl;
@@ -361,6 +365,7 @@ struct lmpthash_config{
     std::string trace_type;
     std::string trace_path;
 
+    uint64_t num_keys=1000000;
 };
 
 struct LMPTSegment{
@@ -1108,7 +1113,6 @@ void parse_femu(std::vector<uint64_t>&  uniq_lpn, std::vector<uint64_t>& lpns, s
     // hash table for unique lpn
     std::unordered_set<uint64_t> ht;
 
-    //打开文件并逐行读取
     std::ifstream infile(filename);
     std::string date, time;
     uint64_t lpn;

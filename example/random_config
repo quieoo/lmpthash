@@ -11,3 +11,4 @@ alpha_limits 0.8
 left_epsilon 1
 right_epsilon 100
 trace_type random
+num_keys 1000000
