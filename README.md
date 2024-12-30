@@ -152,3 +152,13 @@ In this test, we extend the original trace with a given `scale_factor` while mai
 ```
 ./build/hidpu scalability <scale_factor> <config_path>
 ```
+
+### Comparison with LearnedFTL
+We've also implemented the [LearnedFTL](https://github.com/astlxmu/LearnedFTL) into HiDPU Simulator for comparison. Run the following to build and test LearnedFTL on given trace file:
+```
+./build/hidpu learnedftl <num_threads> <config_path>
+```
+
+For LearnedFTL, the SSD capacity is configured as 1TB with a 4KB page size. Other parameters are set according to the specifications in the paper (e.g., the total index size, including the bitmap, CMT, and learned models, is set to 3% of the mapping table size).
+
+Please note that the original LearnedFTL implementation does not support multi-threading; therefore, the num_threads parameter must be set to 1.

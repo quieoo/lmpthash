@@ -1336,7 +1336,36 @@ void scalability_benchmarks(char* config, int scale_factor){
     // build_index_with_scale(lvas, pas, num_lva, &cfg, 16);
 }
 
-void learnedftl_benchmarks(char* config){
+
+typedef struct{
+    uint64_t num_querys;
+    clmpthash_lva* querys;
+    uint64_t* latency;
+    int thread_id;
+    struct ssd* ssd;    
+}learnedftl_thread_arg;
+
+void* learnedftl_read_func(void* arg){
+    learnedftl_thread_arg* thread_arg = (learnedftl_thread_arg*)arg;
+    struct timespec start, end;
+    start.tv_sec = 0;
+    start.tv_nsec = 0;
+    end.tv_sec = 0;
+    end.tv_nsec = 0;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
+    NvmeRequest req;
+    for(uint64_t i=0; i<thread_arg->num_querys; i++){
+        req.slba = thread_arg->querys[i] * thread_arg->ssd->sp.secs_per_pg;
+        req.nlb = thread_arg->ssd->sp.secs_per_pg;
+        ssd_read(thread_arg->ssd, &req);
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    thread_arg->latency[thread_arg->thread_id] = (end.tv_sec - start.tv_sec) * 1000000000 + (end.tv_nsec - start.tv_nsec);
+}
+
+void learnedftl_benchmarks(char* config, int num_threads){
     printf("=========learnedftl benchmarks=========\n");
     clmpthash_config cfg;
     clmpthash_lva* lvas;
@@ -1346,13 +1375,59 @@ void learnedftl_benchmarks(char* config){
     uint64_t num_querys;
     clmpthash_parse_configuration(config, &cfg, &lvas, &pas, &num_lva, &querys, &num_querys);
 
-    printf("total lva: %lu, total query: %lu\n", num_lva, num_querys);
+    printf("num lpns: %lu\n", num_querys);
+    printf("max lpn: %lu\n", lvas[num_lva-1]);
 
-    void* ssd=ssd_init();
-    bulk_write(ssd, lvas, num_lva);
+    printf("writing data...\n");
+    struct ssd* ssd=(struct ssd*)(ssd_init());
 
+    uint64_t s=0;
+    uint64_t e=s+1;
+    NvmeRequest req;
+    uint64_t cnt=0;
+    while(e<num_querys){
+        if(cnt%10000==0){
+            printf("\r    %lu / %lu\n", s, num_querys);
+            printf("\033[1A");
+        }
+        cnt++;
+        if(querys[e] - querys[e-1] !=1){
+            req.slba = querys[s] * ssd->sp.secs_per_pg;
+            req.nlb = (e - s) * ssd->sp.secs_per_pg;
+            ssd_write(ssd, &req);
+            s=e;
+        }
+        e++;
+    }
     printf("begin to read\n");
-    bulk_read(ssd, querys, num_querys);
+    
+    pthread_t threads[num_threads];
+    learnedftl_thread_arg args[num_threads];
+    uint64_t latency[1024]={0};    // max 1024 threads
+    for(int i=0; i<num_threads; i++){
+        args[i].num_querys = num_querys;
+        args[i].querys = querys;
+        args[i].latency = latency;
+        args[i].thread_id = i;
+        args[i].ssd = ssd;
+
+        int rc=pthread_create(&threads[i], NULL, learnedftl_read_func, (void*)&args[i]);
+        if(rc){
+            printf("ERROR; return code from pthread_create() is %d\n", rc);
+            exit(-1);
+        }
+    }
+    
+    for(int i=0; i<num_threads; i++){
+        pthread_join(threads[i], NULL);
+    }
+
+    uint64_t total_lat=0;
+    for(int i=0; i<num_threads; i++){
+        total_lat += latency[i];
+    }
+    printf("Here we don't consider the latency of the SSD read operation, since in the real-world scenario, the IO latency for address translation is un-acceptable.\n");
+    printf("Index processing latency (all in CPU memory): %lf us\n", (double)total_lat/1000/(num_querys*num_threads));
 
     report_statistics(ssd);
 }
@@ -1374,13 +1449,11 @@ int main(int argc, char** argv) {
         int reconstruct= atoi(argv[3]);
         test_host_side_dlmpht_multi_threads(argv[4], num_threads, reconstruct==1);
     }else if(strcmp(argv[1], "learnedftl")==0){
-        // void* ssd=ssd_init();
-        
-        // uint64_t lpns[10]={0, 1, 2, 3, 5, 6, 8, 9, 11, 13};
-        // bulk_write(ssd, lpns, 10);
-        // bulk_read(ssd, lpns, 10);
-        // TODO: some bugs still to be fixed
-        learnedftl_benchmarks(argv[2]);
+        int num_threads = atoi(argv[2]);
+        if(num_threads > 1){
+            printf("Warning: learnedftl only supports single thread, CMT could not tolerate multiple threads concurrent read.\n");
+        }
+        learnedftl_benchmarks(argv[3], num_threads);
     }else{
         printf("unknown command: %s\n", argv[1]);
         printf("Usage:\n");

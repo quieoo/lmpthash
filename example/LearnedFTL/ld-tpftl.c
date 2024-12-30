@@ -21,6 +21,8 @@
 
 #include <time.h>
 #include <sys/time.h>
+#include <stdlib.h>
+#include <pthread.h>
 
 
 // static int hit_num = 0;
@@ -68,7 +70,7 @@ static inline uint64_t tp_hash(uint64_t tvpn)
 /* process hash */
 static inline uint64_t cmt_hash(uint64_t lpn)
 {
-    return lpn % CMT_HASH_SIZE;
+    return lpn % (cmt_hash_table_size);
 }
 
 static void insert_tp_hashtable(hash_table *ht, TPnode *tpnode) 
@@ -86,6 +88,7 @@ static struct cmt_entry* find_hash_entry(hash_table *ht, uint64_t lpn)
     cmt_entry *entry = ht->cmt_table[pos];
     while (entry != NULL && entry->lpn != lpn) {
         entry = entry->next;
+        ht->miss_cnt++;
     }
     return entry;
 }
@@ -96,6 +99,7 @@ static struct TPnode* find_hash_tpnode(hash_table *ht, uint64_t tvpn)
     TPnode *tpnode = ht->tp_table[pos];
     while (tpnode != NULL && tpnode->tvpn != tvpn) {
         tpnode = tpnode->next;
+        ht->miss_cnt++;
     }
     return tpnode;
 }
@@ -360,7 +364,7 @@ static void ssd_init_write_pointer(struct ssd *ssd)
     
     ssd->gtd_wps = malloc(sizeof(struct write_pointer) * ssd->sp.tt_line_wps);
     
-    for (int i = 0; i < 240; i++) {
+    for (int i = 0; i < ssd->sp.tt_line_wps; i++) {
         ssd->gtd_wps[i].curline = NULL;
         ssd->gtd_wps[i].wpl = malloc(sizeof(struct wp_lines));
         ssd->gtd_wps[i].wpl->line = NULL;
@@ -446,7 +450,7 @@ static void insert_wp_lines(struct write_pointer *wpp) {
 
 static bool should_do_gc_v3(struct ssd *ssd, struct write_pointer *wpp) {
     struct line_mgmt *lm = &ssd->lm;
-    printf("GC happens?\n");
+    // printf("GC happens?\n");
     if (ssd->lm.free_line_cnt < 4) {
         printf("what's wrong?\n");
     }
@@ -755,8 +759,10 @@ static void ssd_init_params(struct ssdparams *spp)
     spp->secsz = 512;
     spp->secs_per_pg = 8;
     spp->pgs_per_blk = 512;
-    spp->blks_per_pl = 256; /* 32GB */
-    spp->blks_per_pl = 1024;
+    // spp->blks_per_pl = 256; /* 32GB */
+    // spp->blks_per_pl = 1024;    // 128GB
+    spp->blks_per_pl = 8192;    // 1TB
+    
     
     spp->pls_per_lun = 1;
     spp->luns_per_ch = 8;   /* default 8 */
@@ -801,6 +807,9 @@ static void ssd_init_params(struct ssdparams *spp)
     spp->enable_gc_delay = true;
 
 
+    
+
+
     //=================modified===================
     // for dftl, means how many addresses one page has
     // 512 = 4KB / 8Byte 
@@ -814,7 +823,14 @@ static void ssd_init_params(struct ssdparams *spp)
     // printf("total pages: %d\n", spp->tt_line_wps);
 
     spp->tt_gtd_size = spp->tt_pgs / spp->ents_per_pg;
-    spp->tt_cmt_size = 8192;
+    spp->tt_cmt_size = 8192 * (spp->blks_per_pl / 256); // Original LearnedFTL set 8192 for 32GB SSD, here we extend it for larger capacity while following the same ratio.
+    cmt_hash_table_size = CMT_HASH_SIZE * (spp->blks_per_pl / 256);    // same setting for hash table
+
+    spp->tt_cmt_size=8192;
+    cmt_hash_table_size = CMT_HASH_SIZE;
+    // ##### don't know why, but increase the size of cmt table will increase conflict rate and lookup latency. So we still set it to 8192.
+    
+
     spp->enable_request_prefetch = true;    /* cannot set false! */
     spp->enable_select_prefetch = true;
 
@@ -823,6 +839,7 @@ static void ssd_init_params(struct ssdparams *spp)
     spp->chn_per_pl = spp->nchs * spp->luns_per_ch;
     spp->chn_per_pg = spp->chn_per_pl * spp->pls_per_lun;
     spp->chn_per_blk = spp->chn_per_pg * spp->pgs_per_blk;
+
 
     check_params(spp);
 }
@@ -886,6 +903,9 @@ static void ssd_init_maptbl(struct ssd *ssd)
     struct ssdparams *spp = &ssd->sp;
 
     ssd->maptbl = malloc(sizeof(struct ppa) * spp->tt_pgs);
+    printf("## A single page-level mapping table for %.2f GB capacity with %.2f KB page size takes: %.2f MB\n", (double)spp->tt_pgs * spp->pg_size / (1024 * 1024 * 1024), (double)spp->pg_size / 1024, (double)(spp->tt_pgs) * 20 / (1024 * 1024));  // here we use 20 bytes for each entry since in disaggregate storage, the entry could contain more information except physical address
+
+
     for (int i = 0; i < spp->tt_pgs; i++) {
         ssd->maptbl[i].ppa = UNMAPPED_PPA;
     }
@@ -893,6 +913,8 @@ static void ssd_init_maptbl(struct ssd *ssd)
     // init the gtd
     ssd->lr_nodes = malloc(sizeof(struct lr_node) * spp->tt_trans_pgs);
     ssd->gtd = malloc(sizeof(struct ppa) * spp->tt_trans_pgs);
+    printf("## Learned models +  Global Translation Directory takes: %.2f MB\n", (double)(spp->tt_trans_pgs) * sizeof(struct lr_node) / (1024 * 1024) + (double)(spp->tt_trans_pgs) * sizeof(struct ppa) / (1024 * 1024));
+
     ssd->lr_nodes = malloc(sizeof(struct lr_node) * spp->tt_trans_pgs);
     ssd->gtd_usage = malloc(sizeof(uint64_t) * spp->tt_trans_pgs);
 
@@ -921,6 +943,7 @@ static void ssd_init_cmt(struct ssd *ssd)
     struct cmt_mgmt *cm = &ssd->cm;
     struct cmt_entry *cmt_entry;
     struct hash_table *ht = &cm->ht;
+    ht->miss_cnt = 0;
 
     cm->tt_entries = spp->tt_cmt_size;
     cm->tt_TPnodes = 0;
@@ -928,7 +951,7 @@ static void ssd_init_cmt(struct ssd *ssd)
     cm->used_cmt_entry_cnt = 0;
     cm->counter = 0;
 
-    cm->cmt_entries = malloc(sizeof(struct cmt_entry) * cm->tt_entries);
+    cm->cmt_entries = malloc((sizeof(struct cmt_entry)) * cm->tt_entries);   
     QTAILQ_INIT(&cm->free_cmt_entry_list);
     QTAILQ_INIT(&cm->TPnode_list);
 
@@ -948,13 +971,19 @@ static void ssd_init_cmt(struct ssd *ssd)
     }
     ftl_assert(cm->free_cmt_entry_cnt == cm->tt_entries);
 
-    for (int i = 0; i < CMT_HASH_SIZE; i++) {
+    ht->cmt_table = malloc(sizeof(struct cmt_entry *) * (cmt_hash_table_size));
+    ht->tp_table = malloc(sizeof(struct cmt_entry *) * (cmt_hash_table_size));
+
+    for (int i = 0; i < cmt_hash_table_size; i++) {
         ht->cmt_table[i] = NULL;
     }
 
-    for (int i = 0; i < TP_HASH_SIZE; i++) {
+    for (int i = 0; i < cmt_hash_table_size; i++) {
         ht->tp_table[i] = NULL;
     }
+
+    // we add 12 bytes for larger mapping entry in disaggregate storage
+    printf("## CMT takes: %.2f MB\n", (double)(spp->tt_cmt_size) * (sizeof(struct cmt_entry)+20-8) / (1024 * 1024) + (double)(cmt_hash_table_size) * sizeof(struct cmt_entry *) / (1024 * 1024) + (double)(cmt_hash_table_size) * sizeof(struct cmt_entry *) / (1024 * 1024));
 }
 
 static void ssd_init_rmap(struct ssd *ssd)
@@ -970,6 +999,8 @@ static void ssd_init_rmap(struct ssd *ssd)
 static void ssd_init_bitmap(struct ssd *ssd) {
     struct ssdparams *spp = &ssd->sp;
     ssd->bitmaps = malloc(sizeof(uint8_t)*spp->tt_pgs);
+    // here we assume that the bitmap is 1 bit per page
+    printf("## Bitmaps takes: %.2f MB\n", (double)(spp->tt_pgs) / 8 / (1024 * 1024));
     for (int i = 0; i < spp->tt_pgs; i++)
         ssd->bitmaps[i] = 0;
 
@@ -2066,7 +2097,7 @@ static void clean_one_trans_block(struct ssd *ssd, struct ppa *ppa)
                 gc_translation_page_write(ssd, ppa);
             // }
             } else {
-                printf("translation block contains data page!\n");
+                // printf("translation block contains data page!\n");
             }
             cnt++;
         }
@@ -2270,7 +2301,7 @@ static void gc_read_all_valid_data(struct ssd *ssd, struct ppa *tppa, uint64_t g
 
 static void model_training(struct ssd *ssd, struct write_pointer *wpp, uint64_t group_gtd_lpns[][512], int *group_gtd_index, int start_gtd) {
     // struct timespec time1, time2;
-    printf("Model Training...\n");
+    // printf("Model Training...\n");
     ssd->stat.model_training_nums++;
     const int trans_ent = ssd->sp.ents_per_pg;
     const int parallel = ssd->sp.tt_luns;
@@ -2561,7 +2592,7 @@ void count_segments(struct ssd* ssd) {
     ssd->stat.model_hit_num = 0;
 }
 
-static uint64_t ssd_read(struct ssd *ssd, NvmeRequest *req)
+uint64_t ssd_read(struct ssd *ssd, NvmeRequest *req)
 {
     struct ssdparams *spp = &ssd->sp;
     uint64_t lba = req->slba;
@@ -2577,7 +2608,7 @@ static uint64_t ssd_read(struct ssd *ssd, NvmeRequest *req)
     
 
     if (end_lpn >= spp->tt_pgs) {
-        ftl_err("start_lpn=%lld,tt_pgs=%d\n", start_lpn, ssd->sp.tt_pgs);
+        ftl_err("start_lpn=%ld,tt_pgs=%d\n", start_lpn, ssd->sp.tt_pgs);
     }
 
     /* normal IO read path */
@@ -2677,7 +2708,7 @@ static uint64_t ssd_read(struct ssd *ssd, NvmeRequest *req)
 
 
 
-static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
+uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
 {
     // struct timespec time1, time2;
     uint64_t lba = req->slba;
@@ -2693,9 +2724,9 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
     int sequence_cnt = 0;
 
     if (end_lpn >= spp->tt_pgs) {
-        ftl_err("start_lpn=%lld,tt_pgs=%d\n", start_lpn, ssd->sp.tt_pgs);
+        ftl_err("start_lpn=%ld,tt_pgs=%d\n", start_lpn, ssd->sp.tt_pgs);
     }
-    printf("ssd write: %ld(%ld)\n", start_lpn, end_lpn-start_lpn+1);
+    // printf("ssd write: %ld(%ld)\n", start_lpn, end_lpn-start_lpn+1);
     
     for (lpn = start_lpn; lpn <= end_lpn; lpn++) {
         curlat = 0;
@@ -2731,69 +2762,15 @@ static uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
             set_rmap_ent(ssd, INVALID_LPN, &ppa);
         }
 
-        if(start_lpn==11899879){
-            printf("before write pointer\n");
-        }
+
         struct write_pointer *lwp= &ssd->gtd_wps[wp_index];
-        if(start_lpn==11899879){
-            printf("lpn: %ld, wp_index: %d\n", lpn, wp_index);
-        }
+
         if (!lwp->curline) {
-            if(start_lpn==11899879){
-                printf("before get new line\n");
-                struct line_mgmt *lm = &ssd->lm;
-                printf("free_line_cnt: %d, free_line_threshold: %d\n", lm->free_line_cnt, free_line_threshold);
-
-                struct line *curline = QTAILQ_FIRST(&lm->free_line_list);
-                if (!curline) {
-                    ftl_err("No free lines left in [%s]31232131231321 !!!!\n", ssd->ssdname);
-                    return;
-                }
-                QTAILQ_REMOVE(&lm->free_line_list, curline, entry);
-                lm->free_line_cnt--;
-
-                printf("queue remove success\n");
-                /* wpp->curline is always our next-to-write super-block */
-                struct write_pointer *wpp=lwp;
-                wpp->curline = curline;
-                wpp->ch = 0;
-                wpp->lun = 0;
-                wpp->pg = 0;
-                wpp->blk = curline->id;
-                wpp->pl = 0;
-                printf("tt_lines: %d, curline_id: %d\n", ssd->sp.tt_lines, wpp->curline->id);
-                ssd->line2write_pointer[wpp->curline->id] = wpp;
-                if (&ssd->trans_wp == wpp) {
-                    wpp->curline->type = GTD;
-                } else {
-                    wpp->curline->type = DATA;
-                    // printf("write pointer %d init line id: %d\n", wpp->id, wpp->curline->id);
-                }
-
-                if (wpp->curline->rest == 0) {
-                    func(&wpp->curline->rest);
-                    printf("what's up?\n");
-                }    
-                printf("before insert wp lines\n");
-
-                struct wp_lines *wpl = malloc(sizeof(struct wp_lines));
-                wpl->line = wpp->curline;
-                wpl->next = wpp->wpl->next;
-                wpp->wpl->next = wpl;
-                wpp->vic_cnt++;
-                printf("insert wp lines success\n");
-            }
             init_line_write_pointer(ssd, lwp, true);
         } else {
-            if(start_lpn==11899879){
-                printf("before advance line write pointer\n");
-            }
             advance_line_write_pointer(ssd, lwp);
         }
-        if(start_lpn==11899879){
-            printf("----");
-        }
-
+        
         ppa = get_new_line_page(ssd, lwp);
         set_maptbl_ent(ssd, lpn, &ppa);
         cmt_entry->ppn = ppa2pgidx(ssd, &ppa);
@@ -2963,15 +2940,22 @@ uint64_t* unique_and_sort(uint64_t* lpn, uint64_t num, uint64_t* new_num) {
 void bulk_write(void* ssd, uint64_t* lpn, uint64_t num){
     struct ssd* ssd_ = (struct ssd*)ssd;
     
-    uint64_t new_num;
-    uint64_t* unique_lpn = unique_and_sort(lpn, num, &new_num);
+    // uint64_t new_num;
+    // uint64_t* unique_lpn = unique_and_sort(lpn, num, &new_num);
 
     uint64_t start=0;
     uint64_t end=start+1;
     NvmeRequest req;
-    while(end <= new_num){
-        if(unique_lpn[end] - unique_lpn[end-1] !=1){
-            req.slba = unique_lpn[start] * ssd_->sp.secs_per_pg;
+    uint64_t cnt=0;
+    while(end <= num){
+        if(cnt%1000==0){
+            printf("\r    %lu / %lu\n", start, num);
+            printf("\033[1A");
+        }
+        cnt++;
+
+        if(lpn[end] - lpn[end-1] !=1){
+            req.slba = lpn[start] * ssd_->sp.secs_per_pg;
             req.nlb = (end - start) * ssd_->sp.secs_per_pg;
             ssd_write(ssd_, &req);
             start=end;
@@ -2983,19 +2967,29 @@ void bulk_write(void* ssd, uint64_t* lpn, uint64_t num){
 void bulk_read(void* ssd, uint64_t* lpn, uint64_t num){
     struct ssd* ssd_ = (struct ssd*)ssd;
 
+    struct timespec start, end;
+    start.tv_sec = 0;
+    start.tv_nsec = 0;
+    end.tv_sec = 0;
+    end.tv_nsec = 0;
+    clock_gettime(CLOCK_MONOTONIC, &start);
     for(uint64_t i=0; i<num; i++){
         NvmeRequest req;
         req.slba = lpn[i] * ssd_->sp.secs_per_pg;
         req.nlb = ssd_->sp.secs_per_pg;
         ssd_read(ssd_, &req);
     }
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    printf("## Average read latency(in CPU Memory): %f us\n", ((end.tv_sec - start.tv_sec) * 1000000 + (end.tv_nsec - start.tv_nsec) / 1000.0) / num);
 }
 
 void report_statistics(void* ssd){
+    printf("## Statistics\n");
     struct ssd* ssd_ = (struct ssd*)ssd;
-    printf("req_num: %lld\n", (long long)ssd_->stat.req_num);
-    printf("access_cnt: %lld\n", (long long)ssd_->stat.access_cnt);
-    printf("cmt_hit_cnt: %lld\n", (long long)ssd_->stat.cmt_hit_cnt);
-    printf("model_hit_num: %lld\n", (long long)ssd_->stat.model_hit_num);
-    printf("double read cnt: %lld\n", (long long)ssd_->stat.cmt_miss_cnt);
+    printf("    req_num: %lld\n", (long long)ssd_->stat.req_num);
+    printf("    access_cnt: %lld\n", (long long)ssd_->stat.access_cnt);
+    printf("    cmt_hit_cnt: %lld\n", (long long)ssd_->stat.cmt_hit_cnt);
+    printf("        cmt_miss_cnt per request: %f %lu\n", (double)(ssd_->cm.ht.miss_cnt)/(ssd_->stat.cmt_hit_cnt), ssd_->cm.ht.miss_cnt);
+    printf("    model_hit_num: %lld\n", (long long)ssd_->stat.model_hit_num);
+    printf("    double read cnt: %lld\n", (long long)ssd_->stat.cmt_miss_cnt);
 }

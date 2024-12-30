@@ -26,6 +26,8 @@ typedef struct QemuThread QemuThread;
 #define ENT_PER_TP (2048ULL)
 #define GC_THRESH 5
 
+uint64_t cmt_hash_table_size;
+
 
 enum {
     NAND_READ =  0,
@@ -139,8 +141,10 @@ typedef struct TPnode {
 
 
 typedef struct hash_table {
-    cmt_entry *cmt_table[CMT_HASH_SIZE];
-    TPnode *tp_table[TP_HASH_SIZE];
+    cmt_entry **cmt_table;
+    TPnode **tp_table;
+
+    uint64_t miss_cnt;
 }hash_table;
 
 struct cmt_mgmt {
@@ -435,11 +439,7 @@ struct ssd {
 
 };
 
-void* ssd_init();
-void count_segments(struct ssd* ssd);
-void bulk_write(void* ssd, uint64_t* lpn, uint64_t num);
-void bulk_read(void* ssd, uint64_t* lpn, uint64_t num);
-void report_statistics(void* ssd);
+
 
 # define QEMU_PACKED __attribute__((packed))
 
@@ -539,6 +539,14 @@ typedef struct NvmeRequest {
 #define ftl_log(fmt, ...) \
     do { printf("[FEMU] FTL-Log: " fmt, ## __VA_ARGS__); } while (0)
 
+
+void* ssd_init();
+void count_segments(struct ssd* ssd);
+void bulk_write(void* ssd, uint64_t* lpn, uint64_t num);
+void bulk_read(void* ssd, uint64_t* lpn, uint64_t num);
+uint64_t ssd_read(struct ssd *ssd, NvmeRequest *req);
+uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req);
+void report_statistics(void* ssd);
 
 /* FEMU assert() */
 #ifdef FEMU_DEBUG_FTL
