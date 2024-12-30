@@ -161,4 +161,4 @@ We've also implemented the [LearnedFTL](https://github.com/astlxmu/LearnedFTL) i
 
 For LearnedFTL, the SSD capacity is configured as 1TB with a 4KB page size. Other parameters are set according to the specifications in the paper (e.g., the total index size, including the bitmap, CMT, and learned models, is set to 3% of the mapping table size).
 
-Please note that the original LearnedFTL implementation does not support multi-threading; therefore, the num_threads parameter must be set to 1.
+Please note that the original LearnedFTL implementation does not support multi-threading accessing the index, therefore, the num_threads parameter must be set to 1.
