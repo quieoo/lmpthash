@@ -26,7 +26,7 @@ typedef struct QemuThread QemuThread;
 #define ENT_PER_TP (2048ULL)
 #define GC_THRESH 5
 
-uint64_t cmt_hash_table_size;
+extern uint64_t cmt_hash_table_size;
 
 
 enum {
