@@ -1026,6 +1026,13 @@ void test_host_side_dlmpht_multi_threads(char* config, int num_threads, bool rec
     uint64_t num_querys;
     clmpthash_parse_configuration(config, &cfg, &lvas, &pas, &num_lva, &querys, &num_querys);
 
+    struct timespec start, end;
+    start.tv_sec = 0;
+    start.tv_nsec = 0;
+    end.tv_sec = 0;
+    end.tv_nsec = 0;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
     void* index = clmpthash_build_index(lvas, pas, num_lva, &cfg);
     if (index == NULL) {
         printf("error building index\n");
@@ -1037,6 +1044,12 @@ void test_host_side_dlmpht_multi_threads(char* config, int num_threads, bool rec
         printf("error offloading index\n");
         return;
     }
+
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    uint64_t global_reconstruction_latency=(end.tv_sec-start.tv_sec)*1000000000+(end.tv_nsec-start.tv_nsec);
+
+    printf("Global Resconstruction latency: %lf ms\n", global_reconstruction_latency/1000000.0);
+
 
     // nof_dpu_offload_index(inner_index);
     // return;
