@@ -1,7 +1,7 @@
 alpha 0.5
 beta 0.5
 gamma 0.5
-P 10000
+P 1000
 hashed_num_bucket_c 6.0
 table_size_alpha 0.99
 max_bucket_size 10
@@ -11,4 +11,4 @@ alpha_limits 0.8
 left_epsilon 1
 right_epsilon 100
 trace_type msr
-trace_path ../../trace/MSR-Cambridge/proj_1.csv
+trace_path ../../trace/MSR-Cambridge/prn_1.csv

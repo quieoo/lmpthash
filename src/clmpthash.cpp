@@ -6,6 +6,8 @@
 #include <unordered_set>
 #include <algorithm>
 #include <cstdlib>
+#include <chrono>
+
 
 void cparse_msr_cambridge(clmpthash_lva** lvas, clmpthash_physical_addr** pas, uint64_t* num_lva, clmpthash_lva** querys, uint64_t * num_querys, std::string trace_path){
     std::vector<clmpthash_lva> uniq_lpn;
@@ -191,6 +193,9 @@ void* clmpthash_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, u
     std::vector<clmpthash_lva> keys(lvas, lvas+num);
     std::vector<clmpthash_physical_addr> values(pas, pas+num);
 
+    auto start = std::chrono::high_resolution_clock::now();
+
+
     builder->Segmenting(keys);
     builder->Learning();
     builder->Multi_Bucketing();
@@ -198,6 +203,12 @@ void* clmpthash_build_index(clmpthash_lva* lvas, clmpthash_physical_addr* pas, u
         printf("Build index table failed\n");
         return NULL;
     }
+
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double, std::micro> duration = end - start;
+
+    // 输出执行时间
+    std::cout << "Build index time: " << duration.count()/1000000.0 << " seconds" << std::endl;
 
     // printf("----------Build index done----------\n");
 

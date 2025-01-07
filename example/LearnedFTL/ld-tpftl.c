@@ -43,7 +43,7 @@ static int free_line_threshold = 3;    // ! gc参数：当还剩多少未使用�
 // static int total_no_pred_num = 0;
 // static int total_pred_num = 0;
 // static int no_model_num = 0;
-
+static uint64_t cmt_hash_table_size;
 
 static int line_do_gc(struct ssd *ssd, bool force, struct write_pointer *wpp, struct line *victim_line);
 static int gtd_do_gc(struct ssd *ssd, bool force, struct write_pointer *wpp, struct line *victim_line, bool delete);
