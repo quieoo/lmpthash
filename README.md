@@ -111,7 +111,9 @@ Among those the parameters, `trace_type` and `trace_path` describe the trace fil
 Currently, we support the following trace types:
 - `msr`: MSR trace
 - `random`: randomly generated trace
-- `femu`: the trace captured by running FEMU and recording the LPNs accessed by the guest OS. Each line in the femu trace looks like this: ```"data time lpn"```
+- `femu`: the trace captured by running FEMU and recording the LPNs accessed by the guest OS. Each line in the femu trace looks like this: `data time lpn`. If you want to generate trace files for different upper-layer applications on your own, you can refer to and use [our other library](https://github.com/quieoo/FEMU_Trace.git) 
+
+It is important to note that since the randomly generated trace does not maintain LPN continuity, which is not a common scenario in traditional storage systems, the performance of LearnedTable and LMPTHASH may degrade in this case. Therefore, we recommend downloading and using the MSR trace files instead.
 
 Meaning of other parameters can be found in [here](include/clmpthash.h).
 
@@ -140,6 +142,8 @@ Run the following command to build and test three-level page table on given trac
 ```
 
 ### HiDPU with Reconstruction and Multi-threads
+When testing HiDPU, you can specify the number of threads and whether to reconstruct the index during queries. This can be used to test the hit rate of the pilot cache under different thread counts and to assess the impact of index reconstruction on program correctness.
+
 Run the following command to build and test HiDPU on given trace file:
 ```
 ./build/hidpu lmpthash <num_threads> <if_reconstruction> <config_path>
