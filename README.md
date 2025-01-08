@@ -122,6 +122,7 @@ Build the simulator:
 ```
 cd example
 mkdir build
+cd build
 cmake ..
 make
 ```
