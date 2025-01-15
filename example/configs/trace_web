@@ -12,4 +12,4 @@ left_epsilon 1
 right_epsilon 100
 trace_type msr
 trace_path ../../trace/MSR-Cambridge/web_2.csv
-CMT_MB 2872012.355
+CMT_MB 339.631588
