@@ -1550,7 +1550,6 @@ void learnedftl_benchmarks_v2(char* config, int num_threads){
 
 // optimal case, all threads work perfectly that after sequentialize, the request is like replay each request [num_threads] times.
 void learnedftl_benchmarks_v3(char* config, int num_threads){
-    printf("=========learnedftl benchmarks=========\n");
     clmpthash_config cfg;
     clmpthash_lva* lvas;
     clmpthash_physical_addr* pas;
