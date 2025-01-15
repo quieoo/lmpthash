@@ -51,6 +51,9 @@ typedef struct clmpthash_config{
     // Binary search to find the minimum epsilon that minimizes the number of layers.
     int left_epsilon;
     int right_epsilon;
+
+    // LearnedFTL parameters
+    double CMT_MB;
 }clmpthash_config;
 
 typedef struct clmpthash_pgm_segment{

@@ -322,6 +322,7 @@ struct lmpthash_config{
             else if(name=="trace_path") trace_path=value;
             else if(name=="trace_type") trace_type=value;
             else if(name=="num_keys") num_keys=std::stoull(value);
+            else if(name=="CMT_MB") CMT_MB=std::stof(value);
             else{
                 std::cout<<"unknown parameter: "<<name<<std::endl;
             }
@@ -366,6 +367,8 @@ struct lmpthash_config{
     std::string trace_path;
 
     uint64_t num_keys=1000000;
+
+    double CMT_MB;
 };
 
 struct LMPTSegment{

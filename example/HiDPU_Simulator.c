@@ -5,6 +5,8 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdint.h>
+
 
 #include "ld-tpftl.h"
 
@@ -240,10 +242,20 @@ spram global_spram[64];
 #define htl_fks(id) ((uint64_t*)(&(global_spram[42 + ((id) & ~1)])) + ((id) & 1))
 
 
-#define lt_segs(id) ((clmpthash_pgm_segment*)(&(global_spram[34 + ((id) << 1)])))
-#define lva2pas_spram ((uint8_t*)(&(global_spram[52])))
-#define lva2pa_lva(id)  ((clmpthash_lva*)(lva2pas_spram + id*28))
-#define lva2pa_pa(id)  ((clmpthash_physical_addr*)(lva2pas_spram + id*28 + 8))
+#define t_lva2pas_spram(t_spram) ((uint8_t*)(&((t_spram)[52])))
+
+#define t_lva2pa_lva(t_spram, id)  ((clmpthash_lva*)(t_lva2pas_spram(t_spram) + id*28))
+#define t_lva2pa_pa(t_spram, id)  ((clmpthash_physical_addr*)(t_lva2pas_spram(t_spram) + id*28 + 8))
+
+
+#define t_lmpthash_tmp_spram(t_spram) ((uint8_t*)(&((t_spram)[30])))
+#define t_lmpthash_lindex_meta_spram(t_spram) ((uint8_t*)(&((t_spram)[32])))
+#define t_lmpthash_cache_segment_spram(t_spram) ((uint8_t*)(&((t_spram)[50])))
+#define t_lmpthash_cache_segment_get_spram(t_spram) ((uint8_t*)(&((t_spram)[52])))
+#define t_l1_segs(t_spram, id) ((clmpthash_pgm_segment*)(&((t_spram)[34 + ((id) << 1)])))
+#define t_htl_fks(t_spram, id) ((uint64_t*)(&((t_spram)[42 + ((id) & ~1)])) + ((id) & 1))
+
+
 
 void load_16B_with_tmp_spram(void* dst, void* inner_index, uint32_t idx){
     memcpy(lmpthash_tmp_spram, inner_index+idx*16, 16);
@@ -263,31 +275,35 @@ uint64_t get_u64_from_sm(void* sm, uint32_t idx, uint8_t oft) {
     return p[oft];
 }
 
-int test_lt(char* config) {
-    clmpthash_config cfg;
-    clmpthash_lva* lvas;
-    clmpthash_physical_addr* pas;
-    clmpthash_lva* querys;
-    uint64_t num_lva;
+typedef struct{
     uint64_t num_querys;
-    clmpthash_parse_configuration(config, &cfg, &lvas, &pas, &num_lva, &querys, &num_querys);
+    clmpthash_lva* querys;
+    int cache_last_htl_segment;
+    void* inner_index;
+    spram* thread_spram;
+    uint64_t* num_dmas;
+    uint64_t* dma_volume; // in bytes
+    uint64_t* latency;
+    int thread_id;
+} dlt_thread_arg;
 
-    void* inner_index = clt_build_index(lvas, pas, num_lva, &cfg);
-    if (inner_index == NULL) {
-        printf("error building index\n");
-        return -1;
-    }
-    printf("build index done\n");
+void* dlt_thread(void* arg){
+    dlt_thread_arg* _arg = (dlt_thread_arg*)arg;
+    uint64_t num_querys = _arg->num_querys;
+    clmpthash_lva* querys = _arg->querys;
+    void* inner_index = _arg->inner_index;
+
+
 
     clmpthash_physical_addr pa1;
     uint8_t cache_last_htl_segment=1;
     uint8_t cache_last_htl_segment_hit=0;
 
-    load_16B_with_tmp_spram(lmpthash_lindex_meta_spram, inner_index, 1);
-    Lindex_metadata* lmd_ = (Lindex_metadata*)lmpthash_lindex_meta_spram;
+    load_16B_with_tmp_spram(t_lmpthash_lindex_meta_spram(_arg->thread_spram), inner_index, 1);
+    Lindex_metadata* lmd_ = (Lindex_metadata*)t_lmpthash_lindex_meta_spram(_arg->thread_spram);
     uint16_t sidx_level0 = lmd_->level_offsets[lmd_->num_levels - 1];
-    load_16B_with_tmp_spram(lmpthash_lindex_meta_spram+16, inner_index, sidx_level0);
-    load_16B_with_tmp_spram(lmpthash_lindex_meta_spram+32, inner_index, sidx_level0+1);
+    load_16B_with_tmp_spram(t_lmpthash_lindex_meta_spram(_arg->thread_spram)+16, inner_index, sidx_level0);
+    load_16B_with_tmp_spram(t_lmpthash_lindex_meta_spram(_arg->thread_spram)+32, inner_index, sidx_level0+1);
 
     // get Lindex_metadata
     uint16_t l = lmd_->num_levels;
@@ -309,18 +325,18 @@ int test_lt(char* config) {
     end.tv_nsec = 0;
     clock_gettime(CLOCK_MONOTONIC, &start);
 
+
     for (uint64_t q = 0; q < num_querys; ++q) {
-        // printf("query %lu\n", i);
-        if (q % 10000 == 0) {
+
+        if(_arg->thread_id==0 && q%10000==0){
             printf("\r    %lu / %lu\n", q, num_querys);
             printf("\033[1A");
         }
 
         clmpthash_lva lva = querys[q];
-        
 
         // cached last htl segment
-        clmpthash_pgm_segment* pgm_seg = (clmpthash_pgm_segment*)lmpthash_cache_segment_spram;
+        clmpthash_pgm_segment* pgm_seg = (clmpthash_pgm_segment*)t_lmpthash_cache_segment_spram(_arg->thread_spram);
         uint64_t s_first_key;
         cache_last_htl_segment_hit=0;
         uint32_t s_idx1;
@@ -340,14 +356,13 @@ int test_lt(char* config) {
                     // printf("3: cached_next_key %lx\n", pgm_seg[1].key);
                     pos=(int64_t)(pgm_seg->slope) * (lva - pgm_seg->key) / ((uint32_t)1 << 31) +pgm_seg->intercept;
                     cache_last_htl_segment_hit=1;
-                    spram_cache_hit++;
                 }
             }
         }
         if(!cache_last_htl_segment || !cache_last_htl_segment_hit){
             
             // uint32_t num_htl_segment=level_offsets[l+2]-level_offsets[l+1];
-            clmpthash_pgm_segment* level0_segments = (clmpthash_pgm_segment*)(lmpthash_lindex_meta_spram+16);
+            clmpthash_pgm_segment* level0_segments = (clmpthash_pgm_segment*)(t_lmpthash_lindex_meta_spram(_arg->thread_spram)+16);
 
             // predict with cached level[l] segment
             pos =(int64_t)(level0_segments->slope) * (lva - level0_segments->key) / ((uint32_t)1 << 31) +level0_segments->intercept;
@@ -367,122 +382,123 @@ int test_lt(char* config) {
                     // i=0;
                     // for(;i<4;i++)
                     //     memcpy(l1_segs(i), inner_index + (s_idx2+1+i)*16, 16);    
-                    memcpy(lt_segs(0), inner_index+(++s_idx2)*16, 16);
-                    memcpy(lt_segs(1), inner_index+(++s_idx2)*16, 16);
-                    memcpy(lt_segs(2), inner_index+(++s_idx2)*16, 16);
-                    memcpy(lt_segs(3), inner_index+(++s_idx2)*16, 16);
-                    memcpy(lt_segs(4), inner_index+(++s_idx2)*16, 16);
-                    memcpy(lt_segs(5), inner_index+(++s_idx2)*16, 16);
-                    memcpy(lt_segs(6), inner_index+(++s_idx2)*16, 16);
-                    memcpy(lt_segs(7), inner_index+(++s_idx2)*16, 16);
+                    memcpy(t_l1_segs(_arg->thread_spram,0), inner_index+(++s_idx2)*16, 16);
+                    memcpy(t_l1_segs(_arg->thread_spram,1), inner_index+(++s_idx2)*16, 16);
+                    memcpy(t_l1_segs(_arg->thread_spram,2), inner_index+(++s_idx2)*16, 16);
+                    memcpy(t_l1_segs(_arg->thread_spram,3), inner_index+(++s_idx2)*16, 16);
+                    memcpy(t_l1_segs(_arg->thread_spram,4), inner_index+(++s_idx2)*16, 16);
+                    memcpy(t_l1_segs(_arg->thread_spram,5), inner_index+(++s_idx2)*16, 16);
+                    memcpy(t_l1_segs(_arg->thread_spram,6), inner_index+(++s_idx2)*16, 16);
+                    memcpy(t_l1_segs(_arg->thread_spram,7), inner_index+(++s_idx2)*16, 16);
 
                     // lt_segs_0_outstand()
-                    if(lt_segs(0)->key > lva){
+                    if(t_l1_segs(_arg->thread_spram,0)->key > lva){
                         if(s_idx1+8==s_idx2){
-                            memcpy(lt_segs(7)+1, inner_index + (s_idx1) * 16, 16);    
+                            memcpy(t_l1_segs(_arg->thread_spram,7)+1, inner_index + (s_idx1) * 16, 16);    
                         }
-                        pos = (int64_t)(lt_segs(7)[1].slope) * (lva - lt_segs(7)[1].key) / ((uint32_t)1 << 31) +  lt_segs(7)[1].intercept;
-                        // printf("[i==0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, lt_segs(3)[1].key, lt_segs(3)[1].slope, lt_segs(3)[1].intercept, pos);
+                        pos = (int64_t)(t_l1_segs(_arg->thread_spram,7)[1].slope) * (lva - t_l1_segs(_arg->thread_spram,7)[1].key) / ((uint32_t)1 << 31) +  t_l1_segs(_arg->thread_spram,7)[1].intercept;
+                        // printf("[i==0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, t_l1_segs(_arg->thread_spram,3)[1].key, t_l1_segs(_arg->thread_spram,3)[1].slope, t_l1_segs(_arg->thread_spram,3)[1].intercept, pos);
                         if (pos < 0) pos = 0;
-                        if (pos > lt_segs(0)[0].intercept)pos = lt_segs(0)[0].intercept;
-                        pgm_seg[0].key=lt_segs(7)[1].key;
-                        pgm_seg[0].slope=lt_segs(7)[1].slope;
-                        pgm_seg[0].intercept=lt_segs(7)[1].intercept;
-                        pgm_seg[1].key=lt_segs(0)[0].key;
+                        if (pos > t_l1_segs(_arg->thread_spram,0)[0].intercept)pos = t_l1_segs(_arg->thread_spram,0)[0].intercept;
+                        pgm_seg[0].key=t_l1_segs(_arg->thread_spram,7)[1].key;
+                        pgm_seg[0].slope=t_l1_segs(_arg->thread_spram,7)[1].slope;
+                        pgm_seg[0].intercept=t_l1_segs(_arg->thread_spram,7)[1].intercept;
+                        pgm_seg[1].key=t_l1_segs(_arg->thread_spram,0)[0].key;
                         break;
                     }
                     //lt_segs_1_outstand()
-                    if(lt_segs(1)->key > lva){
-                        pos = (int64_t)(lt_segs(0)[0].slope) * (lva - lt_segs(0)[0].key) / ((uint32_t)1 << 31) +  lt_segs(0)[0].intercept;
-                        // printf("[i>0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, lt_segs(i-1)[0].key, lt_segs(i-1)[0].slope, lt_segs(i-1)[0].intercept, pos);
+                    if(t_l1_segs(_arg->thread_spram,1)->key > lva){
+                        pos = (int64_t)(t_l1_segs(_arg->thread_spram,0)[0].slope) * (lva - t_l1_segs(_arg->thread_spram,0)[0].key) / ((uint32_t)1 << 31) +  t_l1_segs(_arg->thread_spram,0)[0].intercept;
+                        // printf("[i>0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, t_l1_segs(_arg->thread_spram,i-1)[0].key, t_l1_segs(_arg->thread_spram,i-1)[0].slope, t_l1_segs(_arg->thread_spram,i-1)[0].intercept, pos);
                         if (pos < 0) pos = 0;
-                        if (pos > lt_segs(1)[0].intercept)pos = lt_segs(1)[0].intercept;
-                        pgm_seg[0].key=lt_segs(0)[0].key;
-                        pgm_seg[0].slope=lt_segs(0)[0].slope;
-                        pgm_seg[0].intercept=lt_segs(0)[0].intercept;
-                        pgm_seg[1].key=lt_segs(1)[0].key;
+                        if (pos > t_l1_segs(_arg->thread_spram,1)[0].intercept)pos = t_l1_segs(_arg->thread_spram,1)[0].intercept;
+                        pgm_seg[0].key=t_l1_segs(_arg->thread_spram,0)[0].key;
+                        pgm_seg[0].slope=t_l1_segs(_arg->thread_spram,0)[0].slope;
+                        pgm_seg[0].intercept=t_l1_segs(_arg->thread_spram,0)[0].intercept;
+                        pgm_seg[1].key=t_l1_segs(_arg->thread_spram,1)[0].key;
                         break;
                     }
                     //lt_segs_2_outstand()
-                    if(lt_segs(2)->key > lva){
-                        pos = (int64_t)(lt_segs(1)[0].slope) * (lva - lt_segs(1)[0].key) / ((uint32_t)1 << 31) +  lt_segs(1)[0].intercept;
-                        // printf("[i>0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, lt_segs(i-1)[0].key, lt_segs(i-1)[0].slope, lt_segs(i-1)[0].intercept, pos);
+                    if(t_l1_segs(_arg->thread_spram,2)->key > lva){
+                        pos = (int64_t)(t_l1_segs(_arg->thread_spram,1)[0].slope) * (lva - t_l1_segs(_arg->thread_spram,1)[0].key) / ((uint32_t)1 << 31) +  t_l1_segs(_arg->thread_spram,1)[0].intercept;
+                        // printf("[i>0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, t_l1_segs(_arg->thread_spram,i-1)[0].key, t_l1_segs(_arg->thread_spram,i-1)[0].slope, t_l1_segs(_arg->thread_spram,i-1)[0].intercept, pos);
                         if (pos < 0) pos = 0;
-                        if (pos > lt_segs(2)[0].intercept)pos = lt_segs(2)[0].intercept;
-                        pgm_seg[0].key=lt_segs(1)[0].key;
-                        pgm_seg[0].slope=lt_segs(1)[0].slope;
-                        pgm_seg[0].intercept=lt_segs(1)[0].intercept;
-                        pgm_seg[1].key=lt_segs(2)[0].key;
+                        if (pos > t_l1_segs(_arg->thread_spram,2)[0].intercept)pos = t_l1_segs(_arg->thread_spram,2)[0].intercept;
+                        pgm_seg[0].key=t_l1_segs(_arg->thread_spram,1)[0].key;
+                        pgm_seg[0].slope=t_l1_segs(_arg->thread_spram,1)[0].slope;
+                        pgm_seg[0].intercept=t_l1_segs(_arg->thread_spram,1)[0].intercept;
+                        pgm_seg[1].key=t_l1_segs(_arg->thread_spram,2)[0].key;
                         break;
                     }
                     //lt_segs_3_outstand()
-                    if(lt_segs(3)->key > lva){
-                        pos = (int64_t)(lt_segs(2)[0].slope) * (lva - lt_segs(2)[0].key) / ((uint32_t)1 << 31) +  lt_segs(2)[0].intercept;
-                        // printf("[i>0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, lt_segs(i-1)[0].key, lt_segs(i-1)[0].slope, lt_segs(i-1)[0].intercept, pos);
+                    if(t_l1_segs(_arg->thread_spram,3)->key > lva){
+                        pos = (int64_t)(t_l1_segs(_arg->thread_spram,2)[0].slope) * (lva - t_l1_segs(_arg->thread_spram,2)[0].key) / ((uint32_t)1 << 31) +  t_l1_segs(_arg->thread_spram,2)[0].intercept;
+                        // printf("[i>0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, t_l1_segs(_arg->thread_spram,i-1)[0].key, t_l1_segs(_arg->thread_spram,i-1)[0].slope, t_l1_segs(_arg->thread_spram,i-1)[0].intercept, pos);
                         if (pos < 0) pos = 0;
-                        if (pos > lt_segs(3)[0].intercept)pos = lt_segs(3)[0].intercept;
-                        pgm_seg[0].key=lt_segs(2)[0].key;
-                        pgm_seg[0].slope=lt_segs(2)[0].slope;
-                        pgm_seg[0].intercept=lt_segs(2)[0].intercept;
-                        pgm_seg[1].key=lt_segs(3)[0].key;
+                        if (pos > t_l1_segs(_arg->thread_spram,3)[0].intercept)pos = t_l1_segs(_arg->thread_spram,3)[0].intercept;
+                        pgm_seg[0].key=t_l1_segs(_arg->thread_spram,2)[0].key;
+                        pgm_seg[0].slope=t_l1_segs(_arg->thread_spram,2)[0].slope;
+                        pgm_seg[0].intercept=t_l1_segs(_arg->thread_spram,2)[0].intercept;
+                        pgm_seg[1].key=t_l1_segs(_arg->thread_spram,3)[0].key;
                         break;
                     }
                     //lt_segs_4_outstand()
-                    if(lt_segs(4)->key > lva){
-                        pos = (int64_t)(lt_segs(3)[0].slope) * (lva - lt_segs(3)[0].key) / ((uint32_t)1 << 31) +  lt_segs(3)[0].intercept;
-                        // printf("[i>0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, lt_segs(i-1)[0].key, lt_segs(i-1)[0].slope, lt_segs(i-1)[0].intercept, pos);
+                    if(t_l1_segs(_arg->thread_spram,4)->key > lva){
+                        pos = (int64_t)(t_l1_segs(_arg->thread_spram,3)[0].slope) * (lva - t_l1_segs(_arg->thread_spram,3)[0].key) / ((uint32_t)1 << 31) +  t_l1_segs(_arg->thread_spram,3)[0].intercept;
+                        // printf("[i>0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, t_l1_segs(_arg->thread_spram,i-1)[0].key, t_l1_segs(_arg->thread_spram,i-1)[0].slope, t_l1_segs(_arg->thread_spram,i-1)[0].intercept, pos);
                         if (pos < 0) pos = 0;
-                        if (pos > lt_segs(4)[0].intercept)pos = lt_segs(4)[0].intercept;
-                        pgm_seg[0].key=lt_segs(3)[0].key;
-                        pgm_seg[0].slope=lt_segs(3)[0].slope;
-                        pgm_seg[0].intercept=lt_segs(3)[0].intercept;
-                        pgm_seg[1].key=lt_segs(4)[0].key;
+                        if (pos > t_l1_segs(_arg->thread_spram,4)[0].intercept)pos = t_l1_segs(_arg->thread_spram,4)[0].intercept;
+                        pgm_seg[0].key=t_l1_segs(_arg->thread_spram,3)[0].key;
+                        pgm_seg[0].slope=t_l1_segs(_arg->thread_spram,3)[0].slope;
+                        pgm_seg[0].intercept=t_l1_segs(_arg->thread_spram,3)[0].intercept;
+                        pgm_seg[1].key=t_l1_segs(_arg->thread_spram,4)[0].key;
                         break;
                     }
                     //lt_segs_5_outstand()
-                    if(lt_segs(5)->key > lva){
-                        pos = (int64_t)(lt_segs(4)[0].slope) * (lva - lt_segs(4)[0].key) / ((uint32_t)1 << 31) +  lt_segs(4)[0].intercept;
-                        // printf("[i>0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, lt_segs(i-1)[0].key, lt_segs(i-1)[0].slope, lt_segs(i-1)[0].intercept, pos);
+                    if(t_l1_segs(_arg->thread_spram,5)->key > lva){
+                        pos = (int64_t)(t_l1_segs(_arg->thread_spram,4)[0].slope) * (lva - t_l1_segs(_arg->thread_spram,4)[0].key) / ((uint32_t)1 << 31) +  t_l1_segs(_arg->thread_spram,4)[0].intercept;
+                        // printf("[i>0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, t_l1_segs(_arg->thread_spram,i-1)[0].key, t_l1_segs(_arg->thread_spram,i-1)[0].slope, t_l1_segs(_arg->thread_spram,i-1)[0].intercept, pos);
                         if (pos < 0) pos = 0;
-                        if (pos > lt_segs(5)[0].intercept)pos = lt_segs(5)[0].intercept;
-                        pgm_seg[0].key=lt_segs(4)[0].key;
-                        pgm_seg[0].slope=lt_segs(4)[0].slope;
-                        pgm_seg[0].intercept=lt_segs(4)[0].intercept;
-                        pgm_seg[1].key=lt_segs(5)[0].key;
+                        if (pos > t_l1_segs(_arg->thread_spram,5)[0].intercept)pos = t_l1_segs(_arg->thread_spram,5)[0].intercept;
+                        pgm_seg[0].key=t_l1_segs(_arg->thread_spram,4)[0].key;
+                        pgm_seg[0].slope=t_l1_segs(_arg->thread_spram,4)[0].slope;
+                        pgm_seg[0].intercept=t_l1_segs(_arg->thread_spram,4)[0].intercept;
+                        pgm_seg[1].key=t_l1_segs(_arg->thread_spram,5)[0].key;
                         break;
                     }
                     //lt_segs_6_outstand()
-                    if(lt_segs(6)->key > lva){
-                        pos = (int64_t)(lt_segs(5)[0].slope) * (lva - lt_segs(5)[0].key) / ((uint32_t)1 << 31) +  lt_segs(5)[0].intercept;
-                        // printf("[i>0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, lt_segs(i-1)[0].key, lt_segs(i-1)[0].slope, lt_segs(i-1)[0].intercept, pos);
+                    if(t_l1_segs(_arg->thread_spram,6)->key > lva){
+                        pos = (int64_t)(t_l1_segs(_arg->thread_spram,5)[0].slope) * (lva - t_l1_segs(_arg->thread_spram,5)[0].key) / ((uint32_t)1 << 31) +  t_l1_segs(_arg->thread_spram,5)[0].intercept;
+                        // printf("[i>0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, t_l1_segs(_arg->thread_spram,i-1)[0].key, t_l1_segs(_arg->thread_spram,i-1)[0].slope, t_l1_segs(_arg->thread_spram,i-1)[0].intercept, pos);
                         if (pos < 0) pos = 0;
-                        if (pos > lt_segs(6)[0].intercept)pos = lt_segs(6)[0].intercept;
-                        pgm_seg[0].key=lt_segs(5)[0].key;
-                        pgm_seg[0].slope=lt_segs(5)[0].slope;
-                        pgm_seg[0].intercept=lt_segs(5)[0].intercept;
-                        pgm_seg[1].key=lt_segs(6)[0].key;
+                        if (pos > t_l1_segs(_arg->thread_spram,6)[0].intercept)pos = t_l1_segs(_arg->thread_spram,6)[0].intercept;
+                        pgm_seg[0].key=t_l1_segs(_arg->thread_spram,5)[0].key;
+                        pgm_seg[0].slope=t_l1_segs(_arg->thread_spram,5)[0].slope;
+                        pgm_seg[0].intercept=t_l1_segs(_arg->thread_spram,5)[0].intercept;
+                        pgm_seg[1].key=t_l1_segs(_arg->thread_spram,6)[0].key;
                         break;
                     }
                     //lt_segs_7_outstand()
-                    if(lt_segs(7)->key > lva){
-                        pos = (int64_t)(lt_segs(6)[0].slope) * (lva - lt_segs(6)[0].key) / ((uint32_t)1 << 31) +  lt_segs(6)[0].intercept;
-                        // printf("[i>0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, lt_segs(i-1)[0].key, lt_segs(i-1)[0].slope, lt_segs(i-1)[0].intercept, pos);
+                    if(t_l1_segs(_arg->thread_spram,7)->key > lva){
+                        pos = (int64_t)(t_l1_segs(_arg->thread_spram,6)[0].slope) * (lva - t_l1_segs(_arg->thread_spram,6)[0].key) / ((uint32_t)1 << 31) +  t_l1_segs(_arg->thread_spram,6)[0].intercept;
+                        // printf("[i>0] key: %lu, first_key: %lu, slope: %u, intercept: %u, pos: %lu\n", lva, t_l1_segs(_arg->thread_spram,i-1)[0].key, t_l1_segs(_arg->thread_spram,i-1)[0].slope, t_l1_segs(_arg->thread_spram,i-1)[0].intercept, pos);
                         if (pos < 0) pos = 0;
-                        if (pos > lt_segs(7)[0].intercept)pos = lt_segs(7)[0].intercept;
-                        pgm_seg[0].key=lt_segs(6)[0].key;
-                        pgm_seg[0].slope=lt_segs(6)[0].slope;
-                        pgm_seg[0].intercept=lt_segs(6)[0].intercept;
-                        pgm_seg[1].key=lt_segs(7)[0].key;
+                        if (pos > t_l1_segs(_arg->thread_spram,7)[0].intercept)pos = t_l1_segs(_arg->thread_spram,7)[0].intercept;
+                        pgm_seg[0].key=t_l1_segs(_arg->thread_spram,6)[0].key;
+                        pgm_seg[0].slope=t_l1_segs(_arg->thread_spram,6)[0].slope;
+                        pgm_seg[0].intercept=t_l1_segs(_arg->thread_spram,6)[0].intercept;
+                        pgm_seg[1].key=t_l1_segs(_arg->thread_spram,7)[0].key;
                         break;
                     }
                     // backup current lt_segs[3][0] to lt_segs[3][1]
-                    lt_segs(7)[1]= lt_segs(7)[0];
+                    t_l1_segs(_arg->thread_spram,7)[1]= t_l1_segs(_arg->thread_spram,7)[0];
                 }
                 l=l-1;
             }
         }
         // reach level-0, search for the right first_key
-        
+
+
         // printf("pos: %lu\n", pos);
         s_idx1 = (PGM_SUB_EPS(pos, epsilon));
         s_idx2=s_idx1+epsilon*2;
@@ -490,6 +506,7 @@ int test_lt(char* config) {
         uint64_t* sub_table_addr=(uint64_t*)(inner_index+1024*1024+8);
 
         // uint16_t dma_width=640;
+
         // printf("bottom level, local search %u : %u \n", s_idx1, s_idx2);
         // if split to 2 bufs, 74897 lva2pas in each dma bufer
         if(s_idx1/74897 == s_idx2/74897){
@@ -504,13 +521,13 @@ int test_lt(char* config) {
                 // dma_width align to 28 bytes
                 if(dma_width%28!=0) dma_width-=(dma_width%28);
                 // usleep(DMA_LATENCY);
-                memcpy(lva2pas_spram, (void*)sb_addr, dma_width);
+                memcpy(t_lva2pas_spram(_arg->thread_spram), (void*)sb_addr, dma_width);
                 dma_num++;
                 sb_addr+=dma_width;
                 i=0;
                 for(;i<dma_width/28;++i){
-                    if(*(lva2pa_lva(i)) == lva){
-                        pa1=*(lva2pa_pa(i));
+                    if(*(t_lva2pa_lva(_arg->thread_spram, i)) == lva){
+                        pa1=*(t_lva2pa_pa(_arg->thread_spram,i));
                         found=1;
                         break;
                     }
@@ -544,36 +561,21 @@ int test_lt(char* config) {
                 if(dma_width>640) dma_width=640;
                 // dma_width align to 28 bytes
                 if(dma_width%28!=0) dma_width-=(dma_width%28);
-                memcpy(lva2pas_spram, (void*)sb_addr, dma_width);
+                memcpy(t_lva2pas_spram(_arg->thread_spram), (void*)sb_addr, dma_width);
                 usleep(DMA_LATENCY);
                 dma_num++;
                 sb_addr+=dma_width;
                 i=0;
                 for(;i<(dma_width/28);++i){
-                    if(*(lva2pa_lva(i)) == lva){
-                        pa1=*(lva2pa_pa(i));
+                    
+                    if(*(t_lva2pa_lva(_arg->thread_spram,i)) == lva){
+                        pa1=*(t_lva2pa_pa(_arg->thread_spram, i));
                         found=1;
                         break;
                     }
                 }
                 if(found)   break;
             }
-            // memcpy(lva2pas_spram, (void*)(sb_addr+(s_idx1%74897)*28), num_lva2pa_first_batch*28);
-            // dma_num++;
-            // i=0;
-            // for(;i<(num_lva2pa_first_batch);++i){
-                
-            //     // printf("i: %u, lva: %lu\n",i, *(lva2pa_lva(i)));
-            //     // printf("pa:\n");
-            //     // for(int p=0;p<20;++p){
-            //     //     printf("%02x ", lva2pa_pa(i)[0].data[p]);
-            //     // }
-            //     // printf("\n");
-            //     if(*(lva2pa_lva(i)) == lva){
-            //         pa1=*(lva2pa_pa(i));
-            //         break;
-            //     }
-            // }
             if(!found){
                 sb_addr=get_u64_from_sm(sub_table_addr, s_idx2/74897/2, s_idx2/74897%2);
                 end_addr=sb_addr+(s_idx2%74897)*28;
@@ -582,36 +584,19 @@ int test_lt(char* config) {
                     if(dma_width>640) dma_width=640;
                     // dma_width align to 28 bytes
                     if(dma_width%28!=0) dma_width-=(dma_width%28);
-                    memcpy(lva2pas_spram, (void*)sb_addr, dma_width);
+                    memcpy(t_lva2pas_spram(_arg->thread_spram), (void*)sb_addr, dma_width);
                     dma_num++;
                     sb_addr+=dma_width;
                     i=0;
                     for(;i<(dma_width/28);++i){
-                        if(*(lva2pa_lva(i)) == lva){
-                            pa1=*(lva2pa_pa(i));
+                        if(*(t_lva2pa_lva(_arg->thread_spram,i)) == lva){
+                            pa1=*(t_lva2pa_pa(_arg->thread_spram,i));
                             found=1;
                             break;
                         }
                     }
                     if(found)   break;
                 }
-
-                // memcpy(lva2pas_spram, (void*)sb_addr, (s_idx2%74897)*28);
-                // i=0;
-                // dma_num++;
-                // for(;i<(s_idx2%74897);++i){
-                    
-                //     // printf("i: %u, lva: %lu\n",i, *(lva2pa_lva(i)));
-                //     // printf("pa:\n");
-                //     // for(int p=0;p<20;++p){
-                //     //     printf("%02x ", lva2pa_pa(i)[0].data[p]);
-                //     // }
-                //     // printf("\n");
-                //     if(*(lva2pa_lva(i)) == lva){
-                //         pa1=*(lva2pa_pa(i));
-                //         break;
-                //     }
-                // }
             }
         }
         clmpthash_lva _lva = 0;
@@ -622,27 +607,78 @@ int test_lt(char* config) {
         }
     }
     clock_gettime(CLOCK_MONOTONIC, &end);
-    printf("pass all queries\n");
-
     uint64_t total_lat=(end.tv_sec-start.tv_sec)*1000000000+(end.tv_nsec-start.tv_nsec);
-    printf("-------------------------------\n");
-    printf("The latency is influenced by both CPU processing and DMA transfer, which depends on the width and frequency, varying across different architectures. For example, in our architecture, the latency of each DMA request ranges from 0.5 to 0.8 µs, depending on the width. For the PageTable, Learned Table, and HiDPU, one DMA request is always issued for the actual mapping entries, each of which is 20 bytes in size. Note that the index processing latency does not accurately reflect the actual latency on the DPU; it is primarily used for correctness testing. \n");
+    _arg->latency[_arg->thread_id]=total_lat;
+    _arg->num_dmas[_arg->thread_id]=dma_num;
+    _arg->dma_volume[_arg->thread_id]=epsilon*2*28;
+}
 
-    printf("Index processing latency in CPU: %lf us\n",(double)total_lat/1000/num_querys);
-    printf("Average number of DMA requests: %f\n", (double)dma_num/num_querys);
-    printf("Average DMA size: %lf bytes\n", (double)average_dma_size);
+void test_lt_multi_threads(char* config, int num_threads){
+    clmpthash_config cfg;
+    clmpthash_lva* lvas;
+    clmpthash_physical_addr* pas;
+    clmpthash_lva* querys;
+    uint64_t num_lva;
+    uint64_t num_querys;
+    clmpthash_parse_configuration(config, &cfg, &lvas, &pas, &num_lva, &querys, &num_querys);
 
-    // printf("throughput: %lf MQ/S\n", (num_querys) / ((double)(total_lat) / 1000));
-    // printf("    spram cache hit ratio: %f\n",(double)spram_cache_hit/num_querys);
+    void* inner_index = clt_build_index(lvas, pas, num_lva, &cfg);
+    if (inner_index == NULL) {
+        printf("error building index\n");
+        return -1;
+    }
+    printf("build D-Learned index done\n");
+
+    uint8_t cache_last_htl_segment=1;
+    uint8_t cache_last_htl_segment_hit=0;
+    if(cache_last_htl_segment){
+        printf("Enabled cache last htl segment\n");
+    }
+
+    pthread_t threads[num_threads];
+    dlt_thread_arg args[num_threads];
+    uint64_t num_dmas[1024]={0};    // max 1024 threads
+    uint64_t dma_volume[1024]={0};
+    uint64_t latency[1024]={0};
+
+    for (int i = 0; i < num_threads; i++) {
+        args[i].cache_last_htl_segment = cache_last_htl_segment;
+        args[i].inner_index = inner_index;
+        args[i].querys = querys;
+        args[i].num_querys = num_querys;
+        args[i].thread_spram=(spram*)malloc(sizeof(spram)*64);
+        args[i].num_dmas = num_dmas;
+        args[i].dma_volume = dma_volume;
+        args[i].latency = latency;
+        args[i].thread_id = i;
+
+        memset(args[i].thread_spram, 0xff, sizeof(spram)*64);
+        int rc=pthread_create(&threads[i], NULL, dlt_thread, &args[i]);
+        if (rc) {
+            printf("ERROR; return code from pthread_create() is %d\n", rc);
+            exit(-1);
+        }
+    }
+
+    for (int i = 0; i < num_threads; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    uint64_t total_lat=0;
+    uint64_t total_dma=0;
+    uint64_t total_dma_volume=0;
+    for (int i = 0; i < num_threads; i++) {
+        total_lat += latency[i];
+        total_dma += num_dmas[i];
+        total_dma_volume += dma_volume[i];
+    }
+    printf("Index processing latency in CPU: %lf us\n", (double)total_lat/1000/(num_querys*num_threads));
+    printf("Average number of DMA request: %lf\n", (double)total_dma/num_querys/num_threads);
+    printf("Average DMA volume: %lf bytes\n", (double)total_dma_volume/num_threads);
 }
 
 
-#define t_lmpthash_tmp_spram(t_spram) ((uint8_t*)(&((t_spram)[30])))
-#define t_lmpthash_lindex_meta_spram(t_spram) ((uint8_t*)(&((t_spram)[32])))
-#define t_lmpthash_cache_segment_spram(t_spram) ((uint8_t*)(&((t_spram)[50])))
-#define t_lmpthash_cache_segment_get_spram(t_spram) ((uint8_t*)(&((t_spram)[52])))
-#define t_l1_segs(t_spram, id) ((clmpthash_pgm_segment*)(&((t_spram)[34 + ((id) << 1)])))
-#define t_htl_fks(t_spram, id) ((uint64_t*)(&((t_spram)[42 + ((id) & ~1)])) + ((id) & 1))
+
 
 
 typedef struct{
@@ -691,9 +727,9 @@ void* dlmpht_query_func(void* arg){
 
     for (uint64_t q = 0; q < num_querys; ++q) {
         // printf("query %lu\n", q);
-        if (q % 10000 == 0) {
-            // printf("\r    %lu / %lu\n", q, num_querys);
-            // printf("\033[1A");
+        if (_arg->thread_id==0 && q % 10000 == 0) {
+            printf("\r    %lu / %lu\n", q, num_querys);
+            printf("\033[1A");
 
             // printf("    cache hit ratio: %f\n",(double)cache_hit/cache_total);
         }
@@ -987,7 +1023,7 @@ void* dlmpht_query_func(void* arg){
 }
 
 void dlmpht_local_reconstruct(void* inner_index){
-    // printf("dlmpht_local_reconstruct\n");
+    printf("performe local_reconstruct...\n");
     
     // initialize Lindex_meta and level0_segment
     load_16B_with_tmp_spram(lmpthash_lindex_meta_spram, inner_index, 1);
@@ -1013,7 +1049,7 @@ void dlmpht_local_reconstruct(void* inner_index){
         htl_seg->meta |= ((uint64_t)version & 0xff) << 54;
         memcpy(inner_index+offset*16, htl_seg, 16);
     }
-    // printf("dlmpht_local_reconstruct done\n");
+    printf("local_reconstruct done\n");
 }
 
 void test_host_side_dlmpht_multi_threads(char* config, int num_threads, bool reconstruct) {
@@ -1093,7 +1129,6 @@ void test_host_side_dlmpht_multi_threads(char* config, int num_threads, bool rec
 
 
     if (reconstruct){
-        printf("Reconstruct the index\n");
         dlmpht_local_reconstruct(inner_index);
     }
 
@@ -1136,7 +1171,7 @@ void* query_function_pagetable(void* arg){
     thread_arg_t* t=(thread_arg_t*)arg;
     for (uint64_t q = 0; q < t->num_query; ++q) {
         // printf("query %lu\n", i);
-        if (q % 10000 == 0) {
+        if(t->thread_id==0 && q%10000==0){
             printf("\r    %lu / %lu\n", q, t->num_query);
             printf("\033[1A");
         }
@@ -1339,36 +1374,47 @@ void scalability_benchmarks(char* config, int scale_factor){
     // build_index_with_scale(lvas, pas, num_lva, &cfg, 8);
     // build_index_with_scale(lvas, pas, num_lva, &cfg, 16);
 }
-
+typedef _Atomic int64_t atomic_int64_t;
 
 typedef struct{
     uint64_t num_querys;
     clmpthash_lva* querys;
-    uint64_t* latency;
-    int thread_id;
-    struct ssd* ssd;    
-}learnedftl_thread_arg;
+    clmpthash_lva* ret;
+    atomic_int64_t * cnt;
+}learnedftl_mt_arg;
 
-void* learnedftl_read_func(void* arg){
-    learnedftl_thread_arg* thread_arg = (learnedftl_thread_arg*)arg;
-    struct timespec start, end;
-    start.tv_sec = 0;
-    start.tv_nsec = 0;
-    end.tv_sec = 0;
-    end.tv_nsec = 0;
-    clock_gettime(CLOCK_MONOTONIC, &start);
+void* thread_task(void* arg){
+    learnedftl_mt_arg* mt_arg = (learnedftl_mt_arg*)arg;
 
-    NvmeRequest req;
-    for(uint64_t i=0; i<thread_arg->num_querys; i++){
-        req.slba = thread_arg->querys[i] * thread_arg->ssd->sp.secs_per_pg;
-        req.nlb = thread_arg->ssd->sp.secs_per_pg;
-        ssd_read(thread_arg->ssd, &req);
+    for(uint64_t i=0; i<mt_arg->num_querys; i++){
+        int64_t x = atomic_fetch_add(mt_arg->cnt, 1);
+        mt_arg->ret[x] = mt_arg->querys[i];
     }
-
-    clock_gettime(CLOCK_MONOTONIC, &end);
-    thread_arg->latency[thread_arg->thread_id] = (end.tv_sec - start.tv_sec) * 1000000000 + (end.tv_nsec - start.tv_nsec);
+    return NULL;
 }
 
+clmpthash_lva* learnedftl_multi_thread(clmpthash_lva* lvas, uint64_t num_lva, int num_threads){
+    clmpthash_lva* ret=malloc(sizeof(clmpthash_lva)*num_lva*num_threads);
+    atomic_int64_t  cnt = ATOMIC_VAR_INIT(0);
+
+    pthread_t threads[num_threads];
+    learnedftl_mt_arg mt_arg[num_threads];
+    for(int i=0; i<num_threads; i++){
+        mt_arg[i].num_querys = num_lva;
+        mt_arg[i].querys = lvas;
+        mt_arg[i].ret = ret;
+        mt_arg[i].cnt = &cnt;
+        pthread_create(&threads[i], NULL, thread_task, &mt_arg[i]);
+    }
+
+    for(int i=0; i<num_threads; i++){
+        pthread_join(threads[i], NULL);
+    }
+    printf("monitoring SSD queue that merge multi-thread requests into single sequential requests\n. %lu -> %lu\n", num_lva, num_lva*num_threads);
+    return ret;
+}
+
+// merge multiple threads request after writing SSD
 void learnedftl_benchmarks(char* config, int num_threads){
     printf("=========learnedftl benchmarks=========\n");
     clmpthash_config cfg;
@@ -1379,11 +1425,13 @@ void learnedftl_benchmarks(char* config, int num_threads){
     uint64_t num_querys;
     clmpthash_parse_configuration(config, &cfg, &lvas, &pas, &num_lva, &querys, &num_querys);
 
+    // num_querys=25574370;
+
     printf("num lpns: %lu\n", num_querys);
     printf("max lpn: %lu\n", lvas[num_lva-1]);
 
     printf("writing data...\n");
-    struct ssd* ssd=(struct ssd*)(ssd_init());
+    struct ssd* ssd=(struct ssd*)(ssd_init((uint64_t)(23339)));
 
     uint64_t s=0;
     uint64_t e=s+1;
@@ -1404,47 +1452,187 @@ void learnedftl_benchmarks(char* config, int num_threads){
         e++;
     }
     printf("begin to read\n");
-    
-    pthread_t threads[num_threads];
-    learnedftl_thread_arg args[num_threads];
-    uint64_t latency[1024]={0};    // max 1024 threads
-    for(int i=0; i<num_threads; i++){
-        args[i].num_querys = num_querys;
-        args[i].querys = querys;
-        args[i].latency = latency;
-        args[i].thread_id = i;
-        args[i].ssd = ssd;
 
-        int rc=pthread_create(&threads[i], NULL, learnedftl_read_func, (void*)&args[i]);
-        if(rc){
-            printf("ERROR; return code from pthread_create() is %d\n", rc);
-            exit(-1);
+    clmpthash_lva* ret = learnedftl_multi_thread(querys, num_querys, num_threads);
+
+    struct timespec start, end;
+    start.tv_sec = 0;
+    start.tv_nsec = 0;
+    end.tv_sec = 0;
+    end.tv_nsec = 0;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
+    NvmeRequest req_read;
+    for(uint64_t i=0; i<num_querys*num_threads; i++){
+        if(i%10000==0){
+            printf("\r    %lu / %lu\n", i, num_querys);
+            printf("\033[1A");
         }
+        req_read.slba = ret[i] * ssd->sp.secs_per_pg;
+        req_read.nlb = ssd->sp.secs_per_pg;
+        ssd_read(ssd, &req_read);
     }
-    
-    for(int i=0; i<num_threads; i++){
-        pthread_join(threads[i], NULL);
-    }
+    clock_gettime(CLOCK_MONOTONIC, &end);
 
-    uint64_t total_lat=0;
-    for(int i=0; i<num_threads; i++){
-        total_lat += latency[i];
-    }
-    printf("Here we don't consider the latency of the SSD read operation, since in the real-world scenario, the IO latency for address translation is un-acceptable.\n");
+    uint64_t total_lat = (end.tv_sec - start.tv_sec) * 1000000000+ (end.tv_nsec - start.tv_nsec);
+    
     printf("Index processing latency (all in CPU memory): %lf us\n", (double)total_lat/1000/(num_querys*num_threads));
 
     report_statistics(ssd);
+}
+
+// merge multiple threads request before writing SSD
+void learnedftl_benchmarks_v2(char* config, int num_threads){
+    printf("=========learnedftl benchmarks=========\n");
+    clmpthash_config cfg;
+    clmpthash_lva* lvas;
+    clmpthash_physical_addr* pas;
+    clmpthash_lva* querys;
+    uint64_t num_lva;
+    uint64_t num_querys;
+    clmpthash_parse_configuration(config, &cfg, &lvas, &pas, &num_lva, &querys, &num_querys);
+
+    clmpthash_lva* ret = learnedftl_multi_thread(querys, num_querys, num_threads);
+    num_querys=num_querys*num_threads;
+    free(querys);
+    querys=ret;
+
+    printf("writing data...\n");
+    struct ssd* ssd=(struct ssd*)(ssd_init((uint64_t)(23339.27226)));
+
+    uint64_t s=0;
+    uint64_t e=s+1;
+    NvmeRequest req;
+    uint64_t cnt=0;
+    while(e<num_querys){
+        if(cnt%10000==0){
+            printf("\r    %lu / %lu\n", s, num_querys);
+            printf("\033[1A");
+        }
+        cnt++;
+        if(querys[e] - querys[e-1] !=1){
+            req.slba = querys[s] * ssd->sp.secs_per_pg;
+            req.nlb = (e - s) * ssd->sp.secs_per_pg;
+            ssd_write(ssd, &req);
+            s=e;
+        }
+        e++;
+    }
+
+    reset_statistics(ssd);
+    printf("begin to read\n");
+
+    struct timespec start, end;
+    start.tv_sec = 0;
+    start.tv_nsec = 0;
+    end.tv_sec = 0;
+    end.tv_nsec = 0;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
+    NvmeRequest req_read;
+    for(uint64_t i=0; i<num_querys; i++){
+        if(i%10000==0){
+            printf("\r    %lu / %lu\n", i, num_querys);
+            printf("\033[1A");
+        }
+        req_read.slba = querys[i] * ssd->sp.secs_per_pg;
+        req_read.nlb = ssd->sp.secs_per_pg;
+        ssd_read(ssd, &req_read);
+    }
+    clock_gettime(CLOCK_MONOTONIC, &end);
+
+    uint64_t total_lat = (end.tv_sec - start.tv_sec) * 1000000000+ (end.tv_nsec - start.tv_nsec);
+    
+    printf("Index processing latency (all in CPU memory): %lf us\n", (double)total_lat/1000/(num_querys));
+
+    report_statistics(ssd);
+}
+
+// optimal case, all threads work perfectly that after sequentialize, the request is like replay each request [num_threads] times.
+void learnedftl_benchmarks_v3(char* config, int num_threads){
+    printf("=========learnedftl benchmarks=========\n");
+    clmpthash_config cfg;
+    clmpthash_lva* lvas;
+    clmpthash_physical_addr* pas;
+    clmpthash_lva* querys;
+    uint64_t num_lva;
+    uint64_t num_querys;
+    clmpthash_parse_configuration(config, &cfg, &lvas, &pas, &num_lva, &querys, &num_querys);
+
+    // dont know why but too large query set could cause Segmentation fault
+    if(num_querys > 50000000)   num_querys=50000000;
+
+    uint64_t cmt_emtries=(cfg.CMT_MB*1024*1024/124);    // 124 is the size of each entry
+
+    printf("writing data...\n");
+    struct ssd* ssd=(struct ssd*)(ssd_init(cmt_emtries));
+    uint64_t s=0;
+    uint64_t e=s+1;
+    NvmeRequest req;
+    uint64_t cnt=0;
+    while(e<num_querys){
+        if(cnt%10000==0){
+            printf("\r    %lu / %lu\n", s, num_querys);
+            printf("\033[1A");
+        }
+        cnt++;
+        if(querys[e] - querys[e-1] !=1){
+            req.slba = querys[s] * ssd->sp.secs_per_pg;
+            req.nlb = (e - s) * ssd->sp.secs_per_pg;
+            ssd_write(ssd, &req);
+            s=e;
+        }
+        e++;
+    }
+    printf("begin to read\n");
+
+    struct timespec start, end;
+    start.tv_sec = 0;
+    start.tv_nsec = 0;
+    end.tv_sec = 0;
+    end.tv_nsec = 0;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
+    NvmeRequest req_read;
+    for(uint64_t i=0; i<num_querys; i++){
+        if(i%10000==0){
+            printf("\r    %lu / %lu\n", i, num_querys);
+            printf("\033[1A");
+        }
+        req_read.slba = querys[i] * ssd->sp.secs_per_pg;
+        req_read.nlb = ssd->sp.secs_per_pg;
+        for(int j=0; j<num_threads; j++){
+            ssd_read(ssd, &req_read);
+        }
+    }
+    clock_gettime(CLOCK_MONOTONIC, &end);
+
+    uint64_t total_lat = (end.tv_sec - start.tv_sec) * 1000000000+ (end.tv_nsec - start.tv_nsec);
+    
+    double index_latency=(double)total_lat/1000/(num_querys*num_threads);
+    double software_overhead=3.51; // 
+
+    uint64_t double_read_cnt=ssd->stat.req_num - ssd->stat.cmt_hit_cnt - ssd->stat.model_hit_num;
+    double average_ios=(ssd->stat.model_hit_num + double_read_cnt * 2) / (double)ssd->stat.req_num;
+    uint64_t io_latency=40; // which is LearnedFTL used configuration
+
+    printf("-------------------------------\n");
+    printf("Due to index size LearnedFTL is hard to be offloaded into DPU, which bring about 3.51us of software overhead. Besides, LearndFTL offload its mapping table to the disk, which may bring 40us of latency for each IO. Since original LearnedFTL implementation does not support multi-threads processing, we monitor an IO queue like SSD that sequentialize the concurrent request, but queueing time is not inclueded in the result.\n");
+    printf("Index lookup time: %lf us\n", index_latency);  
+    printf("Average IOs: %lf\n", average_ios);
+    printf("Total time: %lf us\n", index_latency + software_overhead + average_ios * io_latency);
+    // report_statistics(ssd);
 }
 
 int main(int argc, char** argv) {
     if(strcmp(argv[1], "lmpthash") == 0){
         test_host_side_clmpthash(argv[2]);
     }else if(strcmp(argv[1], "pagetable") == 0){
-        int num_threads = 1;
-        test_pt(argv[2], num_threads);
+        int num_threads = atoi(argv[2]);
+        test_pt(argv[3], num_threads);
     }else if(strcmp(argv[1], "learnedtable") == 0){
-        // TODO: add the implementation of multi-threaded learned table
-        test_lt(argv[2]);
+        int num_threads = atoi(argv[2]);
+        test_lt_multi_threads(argv[3], num_threads);
     }else if(strcmp(argv[1], "scalability")==0){
         int scale_factor = atoi(argv[2]);
         scalability_benchmarks(argv[3], scale_factor);  
@@ -1454,14 +1642,11 @@ int main(int argc, char** argv) {
         test_host_side_dlmpht_multi_threads(argv[4], num_threads, reconstruct==1);
     }else if(strcmp(argv[1], "learnedftl")==0){
         int num_threads = atoi(argv[2]);
-        if(num_threads > 1){
-            printf("Warning: learnedftl only supports single thread, CMT could not tolerate multiple threads concurrent read.\n");
-        }
-        learnedftl_benchmarks(argv[3], num_threads);
+        learnedftl_benchmarks_v3(argv[3], num_threads);
     }else{
         printf("unknown command: %s\n", argv[1]);
         printf("Usage:\n");
-        printf("./program_name lmpthasht <config_path>\n");
+        printf("./program_name lmpthash <config_path>\n");
         printf("./program_name pagetable <config_path>\n");
         printf("./program_name learnedtable <config_path>\n");
         printf("./program_name hidpu <num_threads> <if_reconstruct> <config_path>\n");

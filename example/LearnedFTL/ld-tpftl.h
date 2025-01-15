@@ -539,13 +539,15 @@ typedef struct NvmeRequest {
     do { printf("[FEMU] FTL-Log: " fmt, ## __VA_ARGS__); } while (0)
 
 
-void* ssd_init();
+// void* ssd_init();
+void* ssd_init(uint64_t cmt_ent_num);
 void count_segments(struct ssd* ssd);
 void bulk_write(void* ssd, uint64_t* lpn, uint64_t num);
 void bulk_read(void* ssd, uint64_t* lpn, uint64_t num);
 uint64_t ssd_read(struct ssd *ssd, NvmeRequest *req);
 uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req);
 void report_statistics(void* ssd);
+void reset_statistics(void* ssd);
 
 /* FEMU assert() */
 #ifdef FEMU_DEBUG_FTL

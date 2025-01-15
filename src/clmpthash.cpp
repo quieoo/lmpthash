@@ -112,6 +112,7 @@ void clmpthash_parse_configuration(char* config_path, clmpthash_config* cfg, clm
     cfg->alpha_limits=config.alpha_limits;
     cfg->left_epsilon=config.left_epsilon;
     cfg->right_epsilon=config.right_epsilon;
+    cfg->CMT_MB=config.CMT_MB;
 }
 
 void clmpthash_clean_bufs(clmpthash_lva* lvas, clmpthash_physical_addr* pas, clmpthash_lva* querys){

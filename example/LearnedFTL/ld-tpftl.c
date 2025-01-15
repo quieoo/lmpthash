@@ -754,7 +754,7 @@ static void check_params(struct ssdparams *spp)
     //ftl_assert(is_power_of_2(spp->nchs));
 }
 
-static void ssd_init_params(struct ssdparams *spp)
+static void ssd_init_params(struct ssdparams *spp, uint64_t cmt_ent_num)
 {
     spp->secsz = 512;
     spp->secs_per_pg = 8;
@@ -762,6 +762,7 @@ static void ssd_init_params(struct ssdparams *spp)
     // spp->blks_per_pl = 256; /* 32GB */
     // spp->blks_per_pl = 1024;    // 128GB
     spp->blks_per_pl = 8192;    // 1TB
+    // spp->blks_per_pl=16384;    // 2TB
     
     
     spp->pls_per_lun = 1;
@@ -823,13 +824,14 @@ static void ssd_init_params(struct ssdparams *spp)
     // printf("total pages: %d\n", spp->tt_line_wps);
 
     spp->tt_gtd_size = spp->tt_pgs / spp->ents_per_pg;
-    spp->tt_cmt_size = 8192 * (spp->blks_per_pl / 256); // Original LearnedFTL set 8192 for 32GB SSD, here we extend it for larger capacity while following the same ratio.
-    cmt_hash_table_size = CMT_HASH_SIZE * (spp->blks_per_pl / 256);    // same setting for hash table
-
-    spp->tt_cmt_size=8192;
-    cmt_hash_table_size = CMT_HASH_SIZE;
-    // ##### don't know why, but increase the size of cmt table will increase conflict rate and lookup latency. So we still set it to 8192.
     
+    if(cmt_ent_num<=0){
+        spp->tt_cmt_size=8192;
+        cmt_hash_table_size = CMT_HASH_SIZE;
+    }else{
+        spp->tt_cmt_size=cmt_ent_num;
+        cmt_hash_table_size = cmt_ent_num * 3;
+    }
 
     spp->enable_request_prefetch = true;    /* cannot set false! */
     spp->enable_select_prefetch = true;
@@ -905,6 +907,7 @@ static void ssd_init_maptbl(struct ssd *ssd)
     ssd->maptbl = malloc(sizeof(struct ppa) * spp->tt_pgs);
     printf("## A single page-level mapping table for %.2f GB capacity with %.2f KB page size takes: %.2f MB\n", (double)spp->tt_pgs * spp->pg_size / (1024 * 1024 * 1024), (double)spp->pg_size / 1024, (double)(spp->tt_pgs) * 20 / (1024 * 1024));  // here we use 20 bytes for each entry since in disaggregate storage, the entry could contain more information except physical address
 
+    printf("Index size: \n");
 
     for (int i = 0; i < spp->tt_pgs; i++) {
         ssd->maptbl[i].ppa = UNMAPPED_PPA;
@@ -913,7 +916,7 @@ static void ssd_init_maptbl(struct ssd *ssd)
     // init the gtd
     ssd->lr_nodes = malloc(sizeof(struct lr_node) * spp->tt_trans_pgs);
     ssd->gtd = malloc(sizeof(struct ppa) * spp->tt_trans_pgs);
-    printf("## Learned models +  Global Translation Directory takes: %.2f MB\n", (double)(spp->tt_trans_pgs) * sizeof(struct lr_node) / (1024 * 1024) + (double)(spp->tt_trans_pgs) * sizeof(struct ppa) / (1024 * 1024));
+    printf("    # Learned models +  Global Translation Directory takes: %.2f MB\n", (double)(spp->tt_trans_pgs) * sizeof(struct lr_node) / (1024 * 1024) + (double)(spp->tt_trans_pgs) * sizeof(struct ppa) / (1024 * 1024));
 
     ssd->lr_nodes = malloc(sizeof(struct lr_node) * spp->tt_trans_pgs);
     ssd->gtd_usage = malloc(sizeof(uint64_t) * spp->tt_trans_pgs);
@@ -981,9 +984,9 @@ static void ssd_init_cmt(struct ssd *ssd)
     for (int i = 0; i < cmt_hash_table_size; i++) {
         ht->tp_table[i] = NULL;
     }
-
+    // printf("size of cmt_entry: %d\n", sizeof(struct cmt_entry));
     // we add 12 bytes for larger mapping entry in disaggregate storage
-    printf("## CMT takes: %.2f MB\n", (double)(spp->tt_cmt_size) * (sizeof(struct cmt_entry)+20-8) / (1024 * 1024) + (double)(cmt_hash_table_size) * sizeof(struct cmt_entry *) / (1024 * 1024) + (double)(cmt_hash_table_size) * sizeof(struct cmt_entry *) / (1024 * 1024));
+    printf("    # CMT takes: %.2f MB\n", (double)(spp->tt_cmt_size) * (sizeof(struct cmt_entry)+20-8) / (1024 * 1024) + (double)(cmt_hash_table_size) * sizeof(struct cmt_entry *) / (1024 * 1024) + (double)(cmt_hash_table_size) * sizeof(struct cmt_entry *) / (1024 * 1024));
 }
 
 static void ssd_init_rmap(struct ssd *ssd)
@@ -1000,7 +1003,7 @@ static void ssd_init_bitmap(struct ssd *ssd) {
     struct ssdparams *spp = &ssd->sp;
     ssd->bitmaps = malloc(sizeof(uint8_t)*spp->tt_pgs);
     // here we assume that the bitmap is 1 bit per page
-    printf("## Bitmaps takes: %.2f MB\n", (double)(spp->tt_pgs) / 8 / (1024 * 1024));
+    printf("    # Bitmaps takes: %.2f MB\n", (double)(spp->tt_pgs) / 8 / (1024 * 1024));
     for (int i = 0; i < spp->tt_pgs; i++)
         ssd->bitmaps[i] = 0;
 
@@ -1054,14 +1057,15 @@ static void ssd_init_statistics(struct ssd *ssd)
 }
 
 
-void* ssd_init()
+void* ssd_init(uint64_t cmt_ent_num)
 {
     struct ssd *ssd = malloc(sizeof(struct ssd));
     struct ssdparams *spp = &ssd->sp;
 
     ftl_assert(ssd);
 
-    ssd_init_params(spp);
+    // set CMT entry number to match the specific memory size
+    ssd_init_params(spp, cmt_ent_num);
 
     /* initialize ssd internal layout architecture */
     ssd->ch = malloc(sizeof(struct ssd_channel) * spp->nchs);
@@ -2798,7 +2802,10 @@ uint64_t ssd_write(struct ssd *ssd, NvmeRequest *req)
         lr_node lrn = ssd->lr_nodes[gtd_index];
         if (lrn.u) {
             // * this model has been trained, try to find if this sequential write is longer than any segments
+            // printf("lpn sequence, start_lpn: %ld, end_lpn: %ld, sequence_cnt: %d\n", start_lpn, end_lpn, sequence_cnt);
             for (int j = 0; j < MAX_INTERVALS; j++) {
+                // printf("seg-%d, key: %d, valid_cnt: %d\n", j, lrn.brks[j].key, lrn.brks[j].valid_cnt);
+                
                 if (lrn.brks[j].key >= start_lpn && lrn.brks[j].valid_cnt < sequence_cnt) {
 
                     // * modify this model
@@ -2983,13 +2990,24 @@ void bulk_read(void* ssd, uint64_t* lpn, uint64_t num){
     printf("## Average read latency(in CPU Memory): %f us\n", ((end.tv_sec - start.tv_sec) * 1000000 + (end.tv_nsec - start.tv_nsec) / 1000.0) / num);
 }
 
+void reset_statistics(void* ssd){
+    struct ssd* ssd_ = (struct ssd*)ssd;
+    ssd_->stat.req_num = 0;
+    ssd_->stat.access_cnt = 0;
+    ssd_->stat.cmt_hit_cnt = 0;
+    ssd_->stat.model_hit_num = 0;
+    ssd_->stat.cmt_miss_cnt = 0;
+}
+
 void report_statistics(void* ssd){
     printf("## Statistics\n");
     struct ssd* ssd_ = (struct ssd*)ssd;
-    printf("    req_num: %lld\n", (long long)ssd_->stat.req_num);
-    printf("    access_cnt: %lld\n", (long long)ssd_->stat.access_cnt);
-    printf("    cmt_hit_cnt: %lld\n", (long long)ssd_->stat.cmt_hit_cnt);
+    printf("    req_num: %lu\n", ssd_->stat.req_num);
+    printf("    access_cnt: %lu\n", ssd_->stat.access_cnt);
+    printf("    cmt_hit_cnt: %lu\n", ssd_->stat.cmt_hit_cnt);
     printf("        cmt_miss_cnt per request: %f %lu\n", (double)(ssd_->cm.ht.miss_cnt)/(ssd_->stat.cmt_hit_cnt), ssd_->cm.ht.miss_cnt);
-    printf("    model_hit_num: %lld\n", (long long)ssd_->stat.model_hit_num);
-    printf("    double read cnt: %lld\n", (long long)ssd_->stat.cmt_miss_cnt);
+    printf("    model_hit_num: %lu\n", ssd_->stat.model_hit_num);
+    uint64_t double_read_cnt=ssd_->stat.req_num - ssd_->stat.cmt_hit_cnt - ssd_->stat.model_hit_num;
+    printf("    double read cnt: %lu\n", double_read_cnt);
+    printf("    average IOs per request: %f\n", (ssd_->stat.model_hit_num + double_read_cnt * 2) / (double)ssd_->stat.req_num);
 }
