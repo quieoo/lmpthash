@@ -10,7 +10,7 @@ echo "=====================HiDPU======================================"
 echo "=====================LearnedFTL================================="
 ./build/hidpu learnedftl 16 configs/trace_web
 echo "*****************************************************************"
-echo "Scalability Test examples on trace 'web', with scale_factor=32"
+echo "Scalability Test examples on trace 'web', with scale_factor=4"
 ./build/hidpu scalability 4 configs/trace_web
 echo "*****************************************************************"
 echo "Reconstruction Test on trace 'web', which rebuilds the index while reading"
