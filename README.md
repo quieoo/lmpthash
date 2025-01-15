@@ -6,18 +6,46 @@ Introduction
 LMPTHASH is an index structure developed by the group for managing PB-level data mapping tables in DPU. It combines learning-based indexing, perfect hashing tables. By leveraging the continuity of logical addresses, it improves the spatial efficiency and query speed of the index.
 
 
-## LMPTHASH Library 
-Run the following commnads to build the LMPTHASH library: 
+## 0. Prerequisites
+
+`cmake` is needed to build the program.
+
+## 1. Set Everything Up
+
 ```
-mkdir build
-cd build
-cmake ..
-make
+chmod +x build.sh
+./build.sh
 ```
-Library file `libclmpthash.a` will be outputed in `build`
+It will compile the LMPTHASH library and the HiDPU Simulator.
 
 
-### Usage Example
+## 2. Prepare the trace file
+
+Currently, we support the following trace types:
+- `msr`: MSR trace
+- `random`: randomly generated trace
+- `femu`: the trace captured by running FEMU and recording the LPNs accessed by the guest OS. Each line in the femu trace looks like this: `data time lpn`. If you want to generate trace files for different upper-layer applications on your own, you can refer to and use [our other library](https://github.com/quieoo/FEMU_Trace.git) 
+
+It is important to note that since the randomly generated trace does not maintain LPN continuity, which is not a common scenario in traditional storage systems, the performance of LearnedTable and LMPTHASH may degrade in this case. Therefore, we recommend downloading and using the MSR trace files instead.
+
+For example, after downloading the msr trace from [here](http://iotta.snia.org/traces/block-io/388) it should be kept at `trace/MSR-Cambridge/web_2.csv`.  `trace` is in the same directory as the `lmpthash` directory.
+
+## 3. Run the scripts
+
+We have provided two pre-configured scripts, `run_small_trace.sh` and `run_large_trace.sh`, which test the program's functionality, including performance and functionality tests for different types of indexes, as well as scalability and reconstruction tests for HiDPU. Run the scripts as follows:
+```
+chmod +x run_small_trace.sh
+./run_small_trace.sh
+```
+or
+```
+chmod +x run_large_trace.sh
+./run_large_trace.sh
+```
+
+## Advanced Usage
+
+### LMPTHASH Library 
 
 The following is an example of how to use the LMPTHASH library, which can also be found at `examples/clmpthash_test.c`:
 ```
@@ -83,7 +111,7 @@ cd example
 gcc -o ctest clmpthash_test.c -L../build -lclmpthash -lstdc++ -lm -lpthread
 ```
 
-## HiDPU Simulator
+### HiDPU Simulator
 
 Based on LMPTHASH index structure, we build `HiDPU` which offload the inner index to the DPU and use the techniques such as parallel memory access and caching to improve index lookup efficiency. 
 
@@ -106,43 +134,26 @@ right_epsilon 100
 trace_type msr
 trace_path /home/quieoo/ftl/trace/MSR-Cambridge/web_2.csv
 ```
-Among those the parameters, `trace_type` and `trace_path` describe the trace file used to create index and run the queries. Trace files can be downloaded from [here](http://iotta.snia.org/traces/block-io/388).
-
-Currently, we support the following trace types:
-- `msr`: MSR trace
-- `random`: randomly generated trace
-- `femu`: the trace captured by running FEMU and recording the LPNs accessed by the guest OS. Each line in the femu trace looks like this: `data time lpn`. If you want to generate trace files for different upper-layer applications on your own, you can refer to and use [our other library](https://github.com/quieoo/FEMU_Trace.git) 
-
-It is important to note that since the randomly generated trace does not maintain LPN continuity, which is not a common scenario in traditional storage systems, the performance of LearnedTable and LMPTHASH may degrade in this case. Therefore, we recommend downloading and using the MSR trace files instead.
-
+Among those the parameters, `trace_type` and `trace_path` describe the trace file used to create index and run the queries. 
 Meaning of other parameters can be found in [here](include/clmpthash.h).
 
 
-Build the simulator:
-```
-cd example
-mkdir build
-cd build
-cmake ..
-make
-```
-
 
 HiDPU also integrates two baseline index structures: `Three-level Page Table` and `Learned Table`.
-### Three-level Page Table
+#### Three-level Page Table
 
 Run the following command to build and test three-level page table on given trace file:
 ```
-./build/hidpu pagetable <config_path>
+./build/hidpu pagetable <num_threads> <config_path>
 ```
 
-### Learned Table
+#### Learned Table
 Run the following command to build and test three-level page table on given trace file:
 ```
-./build/hidpu learnedtable <config_path>
+./build/hidpu learnedtable <num_threads> <config_path>
 ```
 
-### HiDPU with Reconstruction and Multi-threads
+#### HiDPU with Reconstruction and Multi-threads
 When testing HiDPU, you can specify the number of threads and whether to reconstruct the index during queries. This can be used to test the hit rate of the pilot cache under different thread counts and to assess the impact of index reconstruction on program correctness.
 
 Run the following command to build and test HiDPU on given trace file:
@@ -152,13 +163,13 @@ Run the following command to build and test HiDPU on given trace file:
 
 Among these parameters, `num_threads` is the number of concurrent threads to run the queries, `if_reconstruction` is a flag to indicate whether to do `LocalReconstruction` during the query, if so the value should be `1`, otherwise `0`.
 
-### Scalability Test
+#### Scalability Test
 In this test, we extend the original trace with a given `scale_factor` while maintaineing the same access pattern. We use the extended trace to build the index, and report the index size.
 ```
 ./build/hidpu scalability <scale_factor> <config_path>
 ```
 
-### Comparison with LearnedFTL
+#### Comparison with LearnedFTL
 We've also implemented the [LearnedFTL](https://github.com/astlxmu/LearnedFTL) into HiDPU Simulator for comparison. Run the following to build and test LearnedFTL on given trace file:
 ```
 ./build/hidpu learnedftl <num_threads> <config_path>
@@ -166,4 +177,4 @@ We've also implemented the [LearnedFTL](https://github.com/astlxmu/LearnedFTL) i
 
 For LearnedFTL, the SSD capacity is configured as 1TB with a 4KB page size. Other parameters are set according to the specifications in the paper (e.g., the total index size, including the bitmap, CMT, and learned models, is set to 3% of the mapping table size).
 
-Please note that the original LearnedFTL implementation does not support multi-threading accessing the index, therefore, the num_threads parameter must be set to 1.
+Note that we could change the Cached Mapping Table(CMT) size through setting `CMT_MB` in the config file.
