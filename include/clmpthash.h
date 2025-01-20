@@ -53,7 +53,7 @@ typedef struct clmpthash_config{
     int right_epsilon;
 
     // LearnedFTL parameters
-    double CMT_MB;
+    double CMT_MB;  // The size of the CMT in MB
 }clmpthash_config;
 
 typedef struct clmpthash_pgm_segment{

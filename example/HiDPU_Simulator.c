@@ -6,58 +6,10 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
-
-
 #include "ld-tpftl.h"
 
 #define PGM_SUB_EPS(x, epsilon) ((x) <= (epsilon) ? 0 : ((x) - (epsilon)))
 #define DMA_LATENCY 0.5
-
-
-int nof_dpu_offload_index(void* index);
-
-int test_host_side_clmpthash(char* config) {
-    clmpthash_config cfg;
-    clmpthash_lva* lvas;
-    clmpthash_physical_addr* pas;
-    clmpthash_lva* querys;
-    uint64_t num_lva, num_querys;
-    clmpthash_parse_configuration(config, &cfg, &lvas, &pas, &num_lva, &querys, &num_querys);
-
-    void* index = clmpthash_build_index(lvas, pas, num_lva, &cfg);
-    if (index == NULL) {
-        printf("error building index\n");
-        return -1;
-    }
-
-    clmpthash_physical_addr pa;
-    for (uint64_t i = 0; i < num_querys; ++i) {
-        if (i % 10000 == 0) {
-            printf("\r    %lu / %lu\n", i, num_querys);
-            printf("\033[1A");
-        }
-
-        int ret = clmpthash_get_pa(querys[i], index, &pa);
-
-        // check if the result is correct: first 8 bytes should be equal to the original lva
-        if (ret == 0) {
-            clmpthash_lva _lva = 0;
-            for (int j = 0; j < 8; j++) { _lva = (_lva << 8) + pa.data[j]; }
-            if (_lva != querys[i]) {
-                printf("wrong result: should be 0x%lx, but got 0x%lx\n", querys[i], _lva);
-                return -1;
-            }
-        } else {
-            printf("error getting pa\n");
-            return -1;
-        }
-        // break;
-    }
-    printf("\ntest passed\n");
-    clmpthash_clean_index(index);
-    clmpthash_clean_bufs(lvas, pas, querys);
-    return 0;
-}
 
 uint64_t MurmurHash2_64(void const* key, size_t len, uint64_t seed) {
     const uint64_t m = 0xc6a4a7935bd1e995ULL;
@@ -676,8 +628,6 @@ void test_lt_multi_threads(char* config, int num_threads){
     printf("Average number of DMA request: %lf\n", (double)total_dma/num_querys/num_threads);
     printf("Average DMA volume: %lf bytes\n", (double)total_dma_volume/num_threads);
 }
-
-
 
 
 
@@ -1623,32 +1573,90 @@ void learnedftl_benchmarks_v3(char* config, int num_threads){
     // report_statistics(ssd);
 }
 
+void print_usage(){
+    printf("Usage:\n");
+    printf("./program_name pagetable <config_path>\n");
+    printf("./program_name learnedtable <config_path>\n");
+    printf("./program_name hidpu <num_threads> <if_reconstruct> <config_path>\n");
+    printf("./program_name scalability <scale_factor> <config_path>\n");
+    printf("./program_name learnedftl <num_threads> <config_path>\n");
+}
+
+int check_numeric_argument(const char* arg) {
+    char* endptr;
+    strtol(arg, &endptr, 10);  // Try to convert to integer
+    return *endptr == '\0';  // Check if conversion was successful (no extra characters)
+}
+
 int main(int argc, char** argv) {
-    if(strcmp(argv[1], "lmpthash") == 0){
-        test_host_side_clmpthash(argv[2]);
-    }else if(strcmp(argv[1], "pagetable") == 0){
+    if (argc < 2) {
+        print_usage();
+        return 1;
+    }
+
+    if (strcmp(argv[1], "pagetable") == 0) {
+        if (argc != 4) {
+            printf("Error: Incorrect number of arguments for pagetable\n");
+            print_usage();
+            return 1;
+        }
         int num_threads = atoi(argv[2]);
         test_pt(argv[3], num_threads);
-    }else if(strcmp(argv[1], "learnedtable") == 0){
-        int num_threads = atoi(argv[2]);
+    }
+    else if (strcmp(argv[1], "learnedtable") == 0) {
+        if (argc != 4) {
+            printf("Error: Incorrect number of arguments for learnedtable\n");
+            print_usage();
+            return 1;
+        }
+        int num_threads = atoi(argv[2]); 
         test_lt_multi_threads(argv[3], num_threads);
-    }else if(strcmp(argv[1], "scalability")==0){
+    }
+    else if (strcmp(argv[1], "scalability") == 0) {
+        if (argc != 4) {
+            printf("Error: Incorrect number of arguments for scalability\n");
+            print_usage();
+            return 1;
+        }
         int scale_factor = atoi(argv[2]);
+        if (!check_numeric_argument(argv[2])) {
+            printf("Error: Scale factor must be a numeric value.\n");
+            return 1;
+        }
         scalability_benchmarks(argv[3], scale_factor);  
-    }else if(strcmp(argv[1], "hidpu")==0){
+    }
+    else if (strcmp(argv[1], "hidpu") == 0) {
+        if (argc != 5) {
+            printf("Error: Incorrect number of arguments for hidpu\n");
+            print_usage();
+            return 1;
+        }
+        if (!check_numeric_argument(argv[2]) || !check_numeric_argument(argv[3])) {
+            printf("Error: Both <num_threads> and <if_reconstruct> must be numeric values.\n");
+            return 1;
+        }
         int num_threads = atoi(argv[2]);
-        int reconstruct= atoi(argv[3]);
-        test_host_side_dlmpht_multi_threads(argv[4], num_threads, reconstruct==1);
-    }else if(strcmp(argv[1], "learnedftl")==0){
+        int reconstruct = atoi(argv[3]);
+        test_host_side_dlmpht_multi_threads(argv[4], num_threads, reconstruct == 1);
+    }
+    else if (strcmp(argv[1], "learnedftl") == 0) {
+        if (argc != 4) {
+            printf("Error: Incorrect number of arguments for learnedftl\n");
+            print_usage();
+            return 1;
+        }
+        if (!check_numeric_argument(argv[2])) {
+            printf("Error: <num_threads> must be a numeric value.\n");
+            return 1;
+        }
         int num_threads = atoi(argv[2]);
         learnedftl_benchmarks_v3(argv[3], num_threads);
-    }else{
-        printf("unknown command: %s\n", argv[1]);
-        printf("Usage:\n");
-        printf("./program_name lmpthash <config_path>\n");
-        printf("./program_name pagetable <config_path>\n");
-        printf("./program_name learnedtable <config_path>\n");
-        printf("./program_name hidpu <num_threads> <if_reconstruct> <config_path>\n");
-        printf("./program_name scalability <scale_factor> <config_path>\n");
     }
+    else {
+        printf("Error: Unknown command: %s\n", argv[1]);
+        print_usage();
+        return 1;
+    }
+
+    return 0;
 }

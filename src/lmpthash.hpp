@@ -10,6 +10,8 @@
 #include <atomic>
 #include <condition_variable>
 #include <unordered_set>
+#include <filesystem>
+
 
 #include "include/clmpthash.h"
 
@@ -300,6 +302,12 @@ struct lmpthash_config{
         pilot_search_threshold(10000000){}
 
     void load_config(std::string config_file){
+        // check if config file exists
+        if(!std::filesystem::exists(config_file)){
+            std::cout<<"config file does not exist: "<<config_file<<std::endl;
+            exit(1);
+        }
+
         std::ifstream fin(config_file);
         std::string line;
         std::string name;
@@ -326,6 +334,12 @@ struct lmpthash_config{
             else{
                 std::cout<<"unknown parameter: "<<name<<std::endl;
             }
+        }
+
+        // check trace_path exists
+        if(!std::filesystem::exists(trace_path)){
+            std::cout<<"trace path does not exist: "<<trace_path<<std::endl;
+            exit(1);
         }
 
         // std::cout<<"================="<<config_file<<"=================="<<std::endl;
