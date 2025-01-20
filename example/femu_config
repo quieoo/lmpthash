@@ -11,4 +11,5 @@ alpha_limits 0.8
 left_epsilon 1
 right_epsilon 100
 trace_type femu
-trace_path  ../../trace/femu_ycsb_0
+trace_path  ../trace/femu_ycsb_0
+CMT_MB 2.76

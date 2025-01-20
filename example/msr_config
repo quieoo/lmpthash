@@ -11,5 +11,5 @@ alpha_limits 0.8
 left_epsilon 1
 right_epsilon 100
 trace_type msr
-trace_path ../../trace/MSR-Cambridge/wdev_0.csv
-
+trace_path ../trace/MSR-Cambridge/wdev_0.csv
+CMT_MB 2.76
