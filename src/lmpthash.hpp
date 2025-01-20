@@ -337,7 +337,7 @@ struct lmpthash_config{
         }
 
         // check trace_path exists
-        if(!std::filesystem::exists(trace_path)){
+        if(trace_type!="random" && !std::filesystem::exists(trace_path)){
             std::cout<<"trace path does not exist: "<<trace_path<<std::endl;
             exit(1);
         }
