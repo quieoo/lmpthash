@@ -57,6 +57,7 @@ Please note that the randomly generated trace does not maintain LPN continuity, 
   Use the following commands to download the MSR trace file:
   ```bash
   pip install gdown
+  mkdir trace
   cd trace
   gdown 'https://drive.google.com/uc?id=1Y8N1t3A4diZ_zhVkpvQ0nxhkiJxdkqGi'
     ```
